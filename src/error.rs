@@ -8,4 +8,6 @@ pub enum Error {
     NoPendingUpdates,
     #[error("Buffer full, cannot write until read")]
     BuffersFull,
+    #[error("BroadcastWheel size N must be greater than 0")]
+    InitializedWithZeroSlots,
 }
