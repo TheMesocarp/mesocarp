@@ -101,8 +101,7 @@ mod tests {
         for i in 0..3 {
             assert!(
                 wheel.buffers[i].load(Acquire).is_null(),
-                "Buffer at index {} not initialized correctly",
-                i
+                "Buffer at index {i} not initialized correctly"
             );
         }
     }
