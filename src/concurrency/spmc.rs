@@ -124,14 +124,14 @@ mod tests {
         );
 
         wheel.broadcast(10); // write_idx = 1, consumer.read_idx = 0
-        assert_eq!(consumer.try_recv().map(|arc| arc), Some(10)); // consumer.read_idx becomes 1
+        assert_eq!(consumer.try_recv(), Some(10)); // consumer.read_idx becomes 1
         assert!(
             consumer.try_recv().is_none(),
             "Consumer should see no more messages now"
         ); // consumer.read_idx (1) == write_idx (1)
 
         wheel.broadcast(20); // write_idx = 2, consumer.read_idx = 1
-        assert_eq!(consumer.try_recv().map(|arc| arc), Some(20)); // consumer.read_idx becomes 2
+        assert_eq!(consumer.try_recv(), Some(20)); // consumer.read_idx becomes 2
         assert!(consumer.try_recv().is_none(), "Again, no more messages"); // consumer.read_idx (2) == write_idx (2)
     }
 
@@ -150,7 +150,7 @@ mod tests {
         wheel.broadcast("rust".to_string()); // write_idx = 3. Item "rust" in slot 2.
         // consumer1.read_idx = 2.
         assert_eq!(
-            consumer1.try_recv().map(|arc| arc),
+            consumer1.try_recv(),
             Some("rust".to_string())
         ); // reads slot 2, read_idx becomes 3
         assert!(
@@ -169,7 +169,7 @@ mod tests {
 
         // Broadcast 1
         wheel.broadcast(1); // slot 0, write_idx = 1
-        assert_eq!(consumer.try_recv().map(|arc| arc), Some(1), "Should get 1"); // consumer.read_idx becomes 1
+        assert_eq!(consumer.try_recv(), Some(1), "Should get 1"); // consumer.read_idx becomes 1
         assert!(
             consumer.try_recv().is_none(),
             "Should be no more items after reading 1"
@@ -177,7 +177,7 @@ mod tests {
 
         // Broadcast 2
         wheel.broadcast(2); // slot 1, write_idx = 2
-        assert_eq!(consumer.try_recv().map(|arc| arc), Some(2), "Should get 2"); // consumer.read_idx becomes 2
+        assert_eq!(consumer.try_recv(), Some(2), "Should get 2"); // consumer.read_idx becomes 2
         assert!(
             consumer.try_recv().is_none(),
             "Should be no more items after reading 2"
@@ -185,7 +185,7 @@ mod tests {
 
         // Broadcast 3 (fills buffer, write_idx wraps)
         wheel.broadcast(3); // slot 2, write_idx = 0
-        assert_eq!(consumer.try_recv().map(|arc| arc), Some(3), "Should get 3"); // consumer.read_idx becomes 0
+        assert_eq!(consumer.try_recv(), Some(3), "Should get 3"); // consumer.read_idx becomes 0
         assert!(
             consumer.try_recv().is_none(),
             "Should be no more items after reading 3"
@@ -194,7 +194,7 @@ mod tests {
         // Broadcast 4 (overwrites item 1 in slot 0)
         wheel.broadcast(4); // slot 0, write_idx = 1
         assert_eq!(
-            consumer.try_recv().map(|arc| arc),
+            consumer.try_recv(),
             Some(4),
             "Should get 4 (overwritten 1)"
         ); // consumer.read_idx becomes 1
@@ -239,7 +239,7 @@ mod tests {
         // Now, if the producer broadcasts one more item, write_idx will differ from read_idx.
         wheel.broadcast(7); // slot 0, write_idx=1. Consumer read_idx=0.
         assert_eq!(
-            consumer.try_recv().map(|arc| arc),
+            consumer.try_recv(),
             Some(7),
             "Consumer should see item 7 as read_idx != write_idx now"
         );
@@ -262,8 +262,8 @@ mod tests {
         wheel.broadcast(20); // slot 1, wheel.write_idx = 2
 
         // c1 can now read 10 and 20
-        assert_eq!(consumer1.try_recv().map(|arc| arc), Some(10)); // c1.read_idx=1
-        assert_eq!(consumer1.try_recv().map(|arc| arc), Some(20)); // c1.read_idx=2
+        assert_eq!(consumer1.try_recv(), Some(10)); // c1.read_idx=1
+        assert_eq!(consumer1.try_recv(), Some(20)); // c1.read_idx=2
         assert!(consumer1.try_recv().is_none()); // c1.read_idx(2) == wheel.write_idx(2)
 
         let mut consumer2 = wheel.register_consumer(); // c2.read_idx = 2 (current wheel.write_idx)
@@ -273,21 +273,21 @@ mod tests {
         wheel.broadcast(40); // slot 3, wheel.write_idx = 4
 
         // Consumer 1 reads (c1.read_idx=2, wheel.write_idx=4)
-        assert_eq!(consumer1.try_recv().map(|arc| arc), Some(30)); // c1.read_idx=3
-        assert_eq!(consumer1.try_recv().map(|arc| arc), Some(40)); // c1.read_idx=4
+        assert_eq!(consumer1.try_recv(), Some(30)); // c1.read_idx=3
+        assert_eq!(consumer1.try_recv(), Some(40)); // c1.read_idx=4
         assert!(consumer1.try_recv().is_none());
 
         // Consumer 2 reads (c2.read_idx=2, wheel.write_idx=4)
-        assert_eq!(consumer2.try_recv().map(|arc| arc), Some(30)); // c2.read_idx=3
-        assert_eq!(consumer2.try_recv().map(|arc| arc), Some(40)); // c2.read_idx=4
+        assert_eq!(consumer2.try_recv(), Some(30)); // c2.read_idx=3
+        assert_eq!(consumer2.try_recv(), Some(40)); // c2.read_idx=4
         assert!(consumer2.try_recv().is_none());
 
         wheel.broadcast(50); // slot 4, wheel.write_idx = 0 (wraps)
 
-        assert_eq!(consumer1.try_recv().map(|arc| arc), Some(50)); // c1.read_idx=0
+        assert_eq!(consumer1.try_recv(), Some(50)); // c1.read_idx=0
         assert!(consumer1.try_recv().is_none());
 
-        assert_eq!(consumer2.try_recv().map(|arc| arc), Some(50)); // c2.read_idx=0
+        assert_eq!(consumer2.try_recv(), Some(50)); // c2.read_idx=0
         assert!(consumer2.try_recv().is_none());
     }
 
@@ -363,7 +363,7 @@ mod tests {
                         // Check items are within broadcast range
                         for &item_val in &items {
                             assert!(
-                                item_val >= 1 && item_val <= NUM_ITEMS_TO_BROADCAST,
+                                (1..=NUM_ITEMS_TO_BROADCAST).contains(&item_val),
                                 "Consumer {} received item {} which is out of broadcast range [1, {}]",
                                 i,
                                 item_val,
@@ -374,7 +374,7 @@ mod tests {
                     // println!("Consumer {} received {} items. First: {:?}, Last: {:?}", i, items.len(), items.first(), items.last());
                 }
                 Err(e) => {
-                    panic!("Consumer thread {} panicked: {:?}", i, e);
+                    panic!("Consumer thread {i} panicked: {e:?}");
                 }
             }
         }
