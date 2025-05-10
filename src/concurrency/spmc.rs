@@ -149,10 +149,7 @@ mod tests {
 
         wheel.broadcast("rust".to_string()); // write_idx = 3. Item "rust" in slot 2.
         // consumer1.read_idx = 2.
-        assert_eq!(
-            consumer1.try_recv(),
-            Some("rust".to_string())
-        ); // reads slot 2, read_idx becomes 3
+        assert_eq!(consumer1.try_recv(), Some("rust".to_string())); // reads slot 2, read_idx becomes 3
         assert!(
             consumer1.try_recv().is_none(),
             "No more after reading 'rust'"
@@ -193,11 +190,7 @@ mod tests {
 
         // Broadcast 4 (overwrites item 1 in slot 0)
         wheel.broadcast(4); // slot 0, write_idx = 1
-        assert_eq!(
-            consumer.try_recv(),
-            Some(4),
-            "Should get 4 (overwritten 1)"
-        ); // consumer.read_idx becomes 1
+        assert_eq!(consumer.try_recv(), Some(4), "Should get 4 (overwritten 1)"); // consumer.read_idx becomes 1
         assert!(
             consumer.try_recv().is_none(),
             "Should be no more items after reading 4"
@@ -351,23 +344,17 @@ mod tests {
                         for j in 0..(items.len() - 1) {
                             assert!(
                                 items[j] <= items[j + 1],
-                                "Consumer {} received items out of order: {} followed by {} (Index {} of {} items. Full: {:?})",
-                                i,
+                                "Consumer {i} received items out of order: {:?} followed by {} (Index {j} of {:?} items. Full: {items:?})",
                                 items[j],
                                 items[j + 1],
-                                j,
-                                items.len(),
-                                items
+                                items.len()
                             );
                         }
                         // Check items are within broadcast range
                         for &item_val in &items {
                             assert!(
                                 (1..=NUM_ITEMS_TO_BROADCAST).contains(&item_val),
-                                "Consumer {} received item {} which is out of broadcast range [1, {}]",
-                                i,
-                                item_val,
-                                NUM_ITEMS_TO_BROADCAST
+                                "Consumer {i} received item {item_val} which is out of broadcast range [1, {NUM_ITEMS_TO_BROADCAST}]"
                             );
                         }
                     }
