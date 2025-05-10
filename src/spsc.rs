@@ -137,7 +137,7 @@ mod tests {
                     match prod.write_heuristics(i) {
                         Ok(_) => break,
                         Err(Error::BuffersFull) => continue,
-                        Err(e) => panic!("unexpected write error: {:?}", e),
+                        Err(e) => panic!("unexpected write error: {e:?}"),
                     }
                 }
             }
@@ -153,7 +153,7 @@ mod tests {
                             break;
                         }
                         Err(Error::NoPendingUpdates) => continue,
-                        Err(e) => panic!("unexpected read error: {:?}", e),
+                        Err(e) => panic!("unexpected read error: {e:?}"),
                     }
                 }
             }
