@@ -544,7 +544,7 @@ mod worker_queue_tests {
 
         // Fill the queue
         for i in 0..N {
-            assert!(queue.push(i).is_ok(), "Push {} failed unexpectedly", i);
+            assert!(queue.push(i).is_ok(), "Push {i} failed unexpectedly");
         }
         // After this, tail = N, head = 0. The queue is full.
 
@@ -581,7 +581,7 @@ mod worker_queue_tests {
         // Take the remaining items
         assert_eq!(worker.try_take(), Some(1), "Should get item 1"); // head = 2
         assert_eq!(worker.try_take(), Some(2), "Should get item 2"); // head = 3
-        assert_eq!(worker.try_take(), Some(N), "Should get item {}", N); // head = 4
+        assert_eq!(worker.try_take(), Some(N), "Should get item {N}"); // head = 4
 
         assert!(
             worker.try_take().is_none(),
@@ -684,7 +684,7 @@ mod worker_queue_tests {
                         // Using a HashSet to verify this.
                         let mut received_jobs_guard = received_jobs_clone.lock().unwrap();
                         if !received_jobs_guard.insert(job) {
-                            panic!("Consumer {} received duplicate job: {}", consumer_id, job);
+                            panic!("Consumer {consumer_id} received duplicate job: {job}");
                         }
                     } else {
                         // No jobs available right now.
@@ -724,7 +724,7 @@ mod worker_queue_tests {
         // Wait for all consumer threads to finish.
         for (i, handle) in worker_handles.into_iter().enumerate() {
             if let Err(e) = handle.join() {
-                panic!("Consumer thread {i} panicked: {:?}", e);
+                panic!("Consumer thread {i} panicked: {e:?}");
             }
         }
 
@@ -740,8 +740,7 @@ mod worker_queue_tests {
         for i in 0..NUM_JOBS {
             assert!(
                 final_received_jobs.contains(&i),
-                "Job {} was not received by any consumer",
-                i
+                "Job {i} was not received by any consumer"
             );
         }
     }
@@ -788,7 +787,7 @@ mod worker_queue_tests {
                         let mut received_jobs_guard = received_jobs_clone.lock().unwrap();
                         // Check for duplicates immediately
                         if !received_jobs_guard.insert(job) {
-                            panic!("Consumer {} received duplicate job: {}", consumer_id, job);
+                            panic!("Consumer {consumer_id} received duplicate job: {job}");
                         }
                         // Reset idle counter on success
                         poll_attempts_without_job = 0;
@@ -831,7 +830,7 @@ mod worker_queue_tests {
         // Wait for all consumer threads to finish their polling loops.
         for (i, handle) in consumer_handles.into_iter().enumerate() {
             if let Err(e) = handle.join() {
-                panic!("Consumer thread {i} panicked: {:?}", e);
+                panic!("Consumer thread {i} panicked: {e:?}");
             }
         }
 
@@ -841,8 +840,7 @@ mod worker_queue_tests {
         let final_tail = queue.tail.load(Ordering::Acquire);
         assert_eq!(
             final_head, final_tail,
-            "Queue is not empty after all consumers finished. Head: {}, Tail: {}. Potential missed items in the queue structure.",
-            final_head, final_tail
+            "Queue is not empty after all consumers finished. Head: {final_head}, Tail: {final_tail}. Potential missed items in the queue structure."
         );
 
         // Check that the total number of unique jobs received across all consumers
@@ -859,8 +857,7 @@ mod worker_queue_tests {
         for i in 0..NUM_ITEMS {
             assert!(
                 received_set.contains(&i),
-                "Job {} was not received by any consumer.",
-                i
+                "Job {i} was not received by any consumer."
             );
         }
     }
