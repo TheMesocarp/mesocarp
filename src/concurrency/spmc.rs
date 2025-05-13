@@ -1,7 +1,7 @@
 use std::ptr::null_mut;
 use std::sync::atomic::Ordering::{Acquire, Release, SeqCst};
-use std::sync::atomic::{AtomicPtr, fence};
-use std::sync::{Arc, atomic::AtomicUsize};
+use std::sync::atomic::{fence, AtomicPtr};
+use std::sync::{atomic::AtomicUsize, Arc};
 use std::thread::yield_now;
 
 use crate::error::Error;
@@ -265,7 +265,7 @@ mod broadcast_tests {
         );
 
         wheel.broadcast("rust".to_string()); // write_idx = 3. Item "rust" in slot 2.
-        // consumer1.read_idx = 2.
+                                             // consumer1.read_idx = 2.
         assert_eq!(consumer1.try_recv(), Some("rust".to_string())); // reads slot 2, read_idx becomes 3
         assert!(
             consumer1.try_recv().is_none(),
