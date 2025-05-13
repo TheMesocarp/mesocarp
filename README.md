@@ -1,5 +1,7 @@
 # mesocarp
 
+![Github Actions](https://github.com/TheMesocarp/mesocarp/workflows/rust/badge.svg)
+
 Atomic primitives for concurrency, synchronization, scheduling, and logging. The cookbook of everything you need to make actor systems scale efficiently.
 
 > Work in Progress! Changes between releases may not be stable.
