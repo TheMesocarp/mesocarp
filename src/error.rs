@@ -10,4 +10,12 @@ pub enum Error {
     BuffersFull,
     #[error("BroadcastWheel size N must be greater than 0")]
     InitializedWithZeroSlots,
+    #[error("Initialized with zero clock slots")]
+    NoClockSlots,
+    #[error("Ordering error occured, time travel!")]
+    TimeTravel,
+    #[error("failed to add scheduleable item to slot")]
+    ClockSubmissionFailed,
+    #[error("No items found!")]
+    NoItems,
 }
