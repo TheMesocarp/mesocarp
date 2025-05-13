@@ -18,7 +18,7 @@ pub struct Time {
 
 #[derive(Debug)]
 /// Hierarchical Timing Wheel (HTW) for scheduling events and messages.
-pub struct Clock<T: Scheduleable + Ord + 'static, const SLOTS: usize, const HEIGHT: usize> {
+pub struct Clock<T: Scheduleable + Ord, const SLOTS: usize, const HEIGHT: usize> {
     pub wheels: [[Vec<T>; SLOTS]; HEIGHT], //timing wheels, with sizes {SLOTS, SLOTS^2, ..., SLOTS^HEIGHT}
     pub current_idxs: [usize; HEIGHT],     // wheel parsing offset index
     pub time: Time,
@@ -31,13 +31,13 @@ impl<T: Scheduleable + Ord, const SLOTS: usize, const HEIGHT: usize> Clock<T, SL
             return Err(Error::NoClockSlots);
         }
         let wheels = std::array::from_fn(|_| std::array::from_fn(|_| Vec::new()));
-        let current = [0 as usize; HEIGHT];
+        let current = [0_usize; HEIGHT];
         Ok(Clock {
             wheels,
             time: Time {
                 time: 0.0,
                 step: 0,
-                timestep: timestep,
+                timestep,
             },
             current_idxs: current,
         })
@@ -51,7 +51,7 @@ impl<T: Scheduleable + Ord, const SLOTS: usize, const HEIGHT: usize> Clock<T, SL
             let startidx = ((SLOTS).pow(1 + k as u32) - SLOTS) / (SLOTS - 1); // start index for each level
             let endidx = ((SLOTS).pow(2 + k as u32) - SLOTS) / (SLOTS - 1) - 1; // end index for each level
             if deltaidx >= startidx {
-                if deltaidx >= (((SLOTS).pow(1 + HEIGHT as u32) - SLOTS) / (SLOTS - 1)) as usize {
+                if deltaidx >= (((SLOTS).pow(1 + HEIGHT as u32) - SLOTS) / (SLOTS - 1)) {
                     return Err(event);
                 }
                 if deltaidx > endidx {
@@ -59,7 +59,7 @@ impl<T: Scheduleable + Ord, const SLOTS: usize, const HEIGHT: usize> Clock<T, SL
                 }
                 let offset =
                     ((deltaidx - startidx) / (SLOTS.pow(k as u32)) + self.current_idxs[k]) % SLOTS; // slot based on the current offset index for level k.
-                self.wheels[k][offset as usize].push(event);
+                self.wheels[k][offset].push(event);
                 return Ok(());
             }
         }
@@ -68,7 +68,7 @@ impl<T: Scheduleable + Ord, const SLOTS: usize, const HEIGHT: usize> Clock<T, SL
     /// consume the next step's pending events.
     pub fn tick(&mut self) -> Result<Vec<T>, Error> {
         let row: &mut [Vec<T>] = &mut self.wheels[0];
-        let events = std::mem::replace(&mut row[self.current_idxs[0]], Vec::new());
+        let events = std::mem::take(&mut row[self.current_idxs[0]]);
         if !events.is_empty() && events[0].time() < self.time.step {
             println!("Time travel detected");
             return Err(Error::TimeTravel);
@@ -99,7 +99,7 @@ impl<T: Scheduleable + Ord, const SLOTS: usize, const HEIGHT: usize> Clock<T, SL
                     return;
                 }
                 let row = &mut self.wheels[k];
-                let higher_events = std::mem::replace(&mut row[self.current_idxs[k]], Vec::new());
+                let higher_events = std::mem::take(&mut row[self.current_idxs[k]]);
                 self.current_idxs[k] = (self.current_idxs[k] + 1) % SLOTS;
                 for event in higher_events {
                     let _ = self.insert(event).map_err(|event| {
@@ -110,3 +110,5 @@ impl<T: Scheduleable + Ord, const SLOTS: usize, const HEIGHT: usize> Clock<T, SL
         }
     }
 }
+
+pub type TimingWheel<T, const SLOTS: usize> = Clock<T, SLOTS, 1>;
