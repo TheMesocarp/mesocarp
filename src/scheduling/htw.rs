@@ -1,4 +1,4 @@
-use std::{any::TypeId, cmp::Reverse, collections::BTreeSet};
+use std::{cmp::Reverse, collections::BTreeSet};
 
 use crate::error::Error;
 
@@ -8,15 +8,15 @@ pub trait Scheduleable {
     fn commit_time(&self) -> u64;
 }
 
+#[derive(Debug)]
 /// Simulation time, simulation step, timestep size, terminal time, and time scale
 pub struct Time {
     pub time: f64,
     pub step: u64,
     pub timestep: f64,
-    pub timescale: f64, // 1.0 = real-time, 0.5 = half-time, 2.0 = double-time
-    pub terminal: Option<f64>,
 }
 
+#[derive(Debug)]
 /// Hierarchical Timing Wheel (HTW) for scheduling events and messages.
 pub struct Clock<T: Scheduleable + Ord + 'static, const SLOTS: usize, const HEIGHT: usize> {
     pub wheels: [[Vec<T>; SLOTS]; HEIGHT], //timing wheels, with sizes {SLOTS, SLOTS^2, ..., SLOTS^HEIGHT}
@@ -26,7 +26,7 @@ pub struct Clock<T: Scheduleable + Ord + 'static, const SLOTS: usize, const HEIG
 
 impl<T: Scheduleable + Ord, const SLOTS: usize, const HEIGHT: usize> Clock<T, SLOTS, HEIGHT> {
     /// New HTW from time-step size and terminal time.
-    pub fn new(timestep: f64, terminal: Option<f64>) -> Result<Self, Error> {
+    pub fn new(timestep: f64) -> Result<Self, Error> {
         if HEIGHT < 1 {
             return Err(Error::NoClockSlots);
         }
@@ -38,8 +38,6 @@ impl<T: Scheduleable + Ord, const SLOTS: usize, const HEIGHT: usize> Clock<T, SL
                 time: 0.0,
                 step: 0,
                 timestep: timestep,
-                timescale: 1.0,
-                terminal: terminal,
             },
             current_idxs: current,
         })
@@ -108,54 +106,6 @@ impl<T: Scheduleable + Ord, const SLOTS: usize, const HEIGHT: usize> Clock<T, SL
                         overflow.insert(Reverse(event));
                     });
                 }
-            }
-        }
-    }
-
-    /// Rollback the wheel
-    pub fn rollback(
-        &mut self,
-        time: u64,
-        overflow: &mut BTreeSet<Reverse<T>>,
-    ) -> Result<(), Error> {
-        self.current_idxs.iter_mut().for_each(|x| *x = 0);
-        self.time.step = time;
-        self.time.time = time as f64 * self.time.timestep;
-
-        let mut resubmit = Vec::new();
-        self.wheels.iter_mut().for_each(|x| {
-            x.iter_mut().for_each(|x| {
-                if x.len() > 0 {
-                    check_process_object_list(time, x, true);
-                    for i in 0..x.len() {
-                        let g = x.remove(i);
-                        resubmit.push(g);
-                    }
-                }
-            })
-        });
-        for i in 0..resubmit.len() {
-            let result = self.insert(resubmit.remove(i));
-            if result.is_err() {
-                if overflow.insert(Reverse(result.err().unwrap())) == false {
-                    return Err(Error::ClockSubmissionFailed);
-                }
-            }
-        }
-        Ok(())
-    }
-}
-
-/// remove local events scheduled after the rollback time.
-fn check_process_object_list<T: Scheduleable + 'static>(
-    time: u64,
-    object_list: &mut Vec<T>,
-    need_annihilator: bool,
-) {
-    for i in 0..object_list.len() {
-        if object_list[i].commit_time() >= time {
-            if !need_annihilator {
-                object_list.remove(i);
             }
         }
     }
