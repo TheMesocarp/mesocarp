@@ -8,6 +8,7 @@ keywords = ["concurrency", "synchronization", "scheduling", "logging"]
 license = "AGPL-3.0"
 readme = "README.md"
 repository = "https://github.com/TheMesocarp/mesocarp"
+homepage = "https://github.com/TheMesocarp/mesocarp"
 version = "0.1.0"
 
 [dependencies]
