@@ -29,7 +29,7 @@ impl<const N: usize, T> BufferWheel<N, T> {
         }
     }
 
-    pub fn write_heuristics(&self, edge_info: T) -> Result<(), Error> {
+    pub fn write(&self, edge_info: T) -> Result<(), Error> {
         let write = self.write.load(Relaxed);
         if self.full.load(Acquire) {
             return Err(Error::BuffersFull);
@@ -50,7 +50,7 @@ impl<const N: usize, T> BufferWheel<N, T> {
         Ok(())
     }
 
-    pub fn read_heuristics(&self) -> Result<T, Error> {
+    pub fn read(&self) -> Result<T, Error> {
         let read = self.read.load(Relaxed);
         if read == self.write.load(Acquire) && !self.full.load(Acquire) {
             return Err(Error::NoPendingUpdates);
@@ -82,18 +82,18 @@ mod tests {
         let buf = BufferWheel::<3, i32>::default();
 
         // reading from an empty buffer should complain
-        assert_eq!(buf.read_heuristics().unwrap_err(), Error::NoPendingUpdates);
+        assert_eq!(buf.read().unwrap_err(), Error::NoPendingUpdates);
 
         // write two items
-        buf.write_heuristics(42).expect("first write okay");
-        buf.write_heuristics(1337).expect("second write okay");
+        buf.write(42).expect("first write okay");
+        buf.write(1337).expect("second write okay");
 
         // read them back in order
-        assert_eq!(buf.read_heuristics().unwrap(), 42);
-        assert_eq!(buf.read_heuristics().unwrap(), 1337);
+        assert_eq!(buf.read().unwrap(), 42);
+        assert_eq!(buf.read().unwrap(), 1337);
 
         // and now it's empty again
-        assert_eq!(buf.read_heuristics().unwrap_err(), Error::NoPendingUpdates);
+        assert_eq!(buf.read().unwrap_err(), Error::NoPendingUpdates);
     }
 
     #[test]
@@ -102,25 +102,25 @@ mod tests {
         // 3rd write errors until we read something.
         let buf = BufferWheel::<2, u8>::default();
 
-        assert!(buf.write_heuristics(10).is_ok());
-        assert!(buf.write_heuristics(20).is_ok());
+        assert!(buf.write(10).is_ok());
+        assert!(buf.write(20).is_ok());
 
         // buffer is full now
-        let e = buf.write_heuristics(30).unwrap_err();
+        let e = buf.write(30).unwrap_err();
         assert_eq!(e, Error::BuffersFull);
 
         // read one slot, which should clear `full`
-        assert_eq!(buf.read_heuristics().unwrap(), 10);
+        assert_eq!(buf.read().unwrap(), 10);
 
         // now we can write again
-        buf.write_heuristics(30).expect("recovered after read");
+        buf.write(30).expect("recovered after read");
 
         // drain the rest
-        assert_eq!(buf.read_heuristics().unwrap(), 20);
-        assert_eq!(buf.read_heuristics().unwrap(), 30);
+        assert_eq!(buf.read().unwrap(), 20);
+        assert_eq!(buf.read().unwrap(), 30);
 
         // finally empty
-        assert_eq!(buf.read_heuristics().unwrap_err(), Error::NoPendingUpdates);
+        assert_eq!(buf.read().unwrap_err(), Error::NoPendingUpdates);
     }
 
     #[test]
@@ -134,7 +134,7 @@ mod tests {
             for i in 0..100 {
                 // spin on full
                 loop {
-                    match prod.write_heuristics(i) {
+                    match prod.write(i) {
                         Ok(_) => break,
                         Err(Error::BuffersFull) => continue,
                         Err(e) => panic!("unexpected write error: {e:?}"),
@@ -147,7 +147,7 @@ mod tests {
             for expected in 0..100 {
                 // spin on empty
                 loop {
-                    match cons.read_heuristics() {
+                    match cons.read() {
                         Ok(v) => {
                             assert_eq!(v, expected);
                             break;
