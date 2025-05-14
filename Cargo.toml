@@ -9,7 +9,7 @@ license = "AGPL-3.0"
 readme = "README.md"
 repository = "https://github.com/TheMesocarp/mesocarp"
 homepage = "https://github.com/TheMesocarp/mesocarp"
-version = "0.1.0"
+version = "1.0.0"
 
 [dependencies]
 array-init = "2.1.0"
