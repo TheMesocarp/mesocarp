@@ -758,11 +758,11 @@ mod tests {
     }
 
     #[test]
-    fn test_drop_deallocates_all_memory() {
+    fn test_allocation_on_flush() {
         let size = 16;
         let mut mnemosyne = Mnemosyne::initialize(size);
         // Track initial allocations
-        let initial_arena_ptr = mnemosyne.allocations[0].0;
+        let _initial_arena_ptr = mnemosyne.allocations[0].0;
         let initial_allocs_count = mnemosyne.allocations.len();
 
         // Write data to fill one arena and cause a flush, and write more to the new arena
@@ -770,27 +770,6 @@ mod tests {
             mnemosyne.write(i as u32, i as u64 * 100);
         }
         assert!(mnemosyne.allocations.len() > initial_allocs_count); // Ensure more than one arena was allocated
-
-        // Use a block to ensure `drop` is called when `mnemosyne_to_drop` goes out of scope
-        let allocations_before_drop: Vec<(*mut u8, Layout)>;
-        {
-            let mut mnemosyne_to_drop = Mnemosyne::initialize(size);
-            for i in 0..5 {
-                mnemosyne_to_drop.write(i as u32, i as u64 * 10);
-            }
-            // Add a separately allocated item
-            let large_item = MyState { x: 1, y: 2.0, z: 3 };
-            mnemosyne_to_drop.write(large_item, 500);
-            allocations_before_drop = mnemosyne_to_drop.allocations.clone();
-            // mnemosyne_to_drop drops here
-        }
-        // It's tricky to *directly* assert memory deallocation without a custom allocator or Valgrind.
-        // We rely on the `Drop` implementation to correctly call `dealloc`.
-        // A proxy for correctness is ensuring the `allocations` vector is cleared,
-        // which means the deallocation loop *was* attempted.
-        // Also, we can't observe the state of `mnemosyne_to_drop` after it's dropped.
-        // We'll rely on sanitizers for actual memory leak detection during CI.
-        // For now, checking internal state after `cleanup` is the best we can do.
     }
 
     #[test]
@@ -937,7 +916,7 @@ mod tests {
         let size = 64;
         let mut mnemosyne = Mnemosyne::initialize(size);
         mnemosyne.write(1u32, 100);
-        let initial_alloc_idx = mnemosyne.alloc_idx;
+        let _initial_alloc_idx = mnemosyne.alloc_idx;
         let initial_allocations_count = mnemosyne.allocations.len();
 
         mnemosyne.flush(true); // Should allocate a new arena and update alloc_idx
