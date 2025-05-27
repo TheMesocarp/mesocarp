@@ -9,12 +9,7 @@ use std::{cmp::Reverse, collections::BTreeSet};
 
 use crate::error::MesoError;
 
-/// Trait for any time-series object for processing.
-pub trait Scheduleable {
-    fn time(&self) -> u64;
-    fn commit_time(&self) -> u64;
-}
-
+use super::Scheduleable;
 #[derive(Debug)]
 /// Hierarchical Timing Wheel (HTW) for scheduling events and messages.
 pub struct Clock<T: Scheduleable + Ord, const SLOTS: usize, const HEIGHT: usize> {
