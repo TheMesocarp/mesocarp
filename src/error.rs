@@ -1,7 +1,8 @@
 use thiserror::Error;
 
+/// Error type for all primitives
 #[derive(Debug, Error, PartialEq, Eq)]
-pub enum Error {
+pub enum MesoError {
     #[error("Null pointer found, must have written as null")]
     ExpectedUpdate,
     #[error("Nothing to read, no pending updates")]

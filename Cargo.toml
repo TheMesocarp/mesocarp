@@ -1,7 +1,7 @@
 [package]
 
 authors     = ["Mesocarp"]
-description = "Lock-free concurrency, synchronization, scheduling, and logging primitives in Rust"
+description = "High-performance concurrency, synchronization, scheduling, and logging primitives in Rust"
 edition     = "2021"
 homepage    = "https://github.com/TheMesocarp/mesocarp"
 keywords    = ["concurrency", "synchronization", "scheduling", "logging"]
@@ -9,7 +9,7 @@ license     = "AGPL-3.0"
 name        = "mesocarp"
 readme      = "README.md"
 repository  = "https://github.com/TheMesocarp/mesocarp"
-version     = "0.4.0"
+version     = "0.4.1"
 
 [dependencies]
 array-init = "2.1.0"

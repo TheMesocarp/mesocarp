@@ -9,7 +9,7 @@ use std::ptr;
 use std::sync::atomic::Ordering::{AcqRel, Acquire, Relaxed, Release};
 use std::sync::atomic::{AtomicBool, AtomicPtr, AtomicUsize};
 
-use crate::error::Error;
+use crate::error::MesoError;
 
 /// A lock-free circular buffer designed for single-producer, single-consumer (SPSC) scenarios.
 #[derive(Debug)]
@@ -51,10 +51,10 @@ impl<const N: usize, T> BufferWheel<N, T> {
     /// Attempts to write the provided data to the next available slot in the circular buffer.
     /// The data is moved into the buffer (not copied). If the buffer is full, returns an error
     /// without consuming the data.
-    pub fn write(&self, data: T) -> Result<(), Error> {
+    pub fn write(&self, data: T) -> Result<(), MesoError> {
         let write = self.write.load(Relaxed);
         if self.full.load(Acquire) {
-            return Err(Error::BuffersFull);
+            return Err(MesoError::BuffersFull);
         }
         let new_ptr = Box::into_raw(Box::new(data));
         let old_ptr = self.buffers[write].swap(new_ptr, AcqRel);
@@ -77,15 +77,15 @@ impl<const N: usize, T> BufferWheel<N, T> {
     /// Attempts to read the next available data from the circular buffer. The data is moved
     /// out of the buffer (not copied) and returned to the caller. If the buffer is empty,
     /// returns an error.
-    pub fn read(&self) -> Result<T, Error> {
+    pub fn read(&self) -> Result<T, MesoError> {
         let read = self.read.load(Relaxed);
         if read == self.write.load(Acquire) && !self.full.load(Acquire) {
-            return Err(Error::NoPendingUpdates);
+            return Err(MesoError::NoPendingUpdates);
         }
         let null = ptr::null_mut();
         let old_ptr = self.buffers[read].swap(null, AcqRel);
         if old_ptr.is_null() {
-            return Err(Error::ExpectedUpdate);
+            return Err(MesoError::ExpectedUpdate);
         }
         let edge = unsafe { Box::from_raw(old_ptr) };
         let info = *edge;
@@ -109,7 +109,7 @@ mod tests {
         let buf = BufferWheel::<3, i32>::default();
 
         // reading from an empty buffer should complain
-        assert_eq!(buf.read().unwrap_err(), Error::NoPendingUpdates);
+        assert_eq!(buf.read().unwrap_err(), MesoError::NoPendingUpdates);
 
         // write two items
         buf.write(42).expect("first write okay");
@@ -120,7 +120,7 @@ mod tests {
         assert_eq!(buf.read().unwrap(), 1337);
 
         // and now it's empty again
-        assert_eq!(buf.read().unwrap_err(), Error::NoPendingUpdates);
+        assert_eq!(buf.read().unwrap_err(), MesoError::NoPendingUpdates);
     }
 
     #[test]
@@ -134,7 +134,7 @@ mod tests {
 
         // buffer is full now
         let e = buf.write(30).unwrap_err();
-        assert_eq!(e, Error::BuffersFull);
+        assert_eq!(e, MesoError::BuffersFull);
 
         // read one slot, which should clear `full`
         assert_eq!(buf.read().unwrap(), 10);
@@ -147,7 +147,7 @@ mod tests {
         assert_eq!(buf.read().unwrap(), 30);
 
         // finally empty
-        assert_eq!(buf.read().unwrap_err(), Error::NoPendingUpdates);
+        assert_eq!(buf.read().unwrap_err(), MesoError::NoPendingUpdates);
     }
 
     #[test]
@@ -163,7 +163,7 @@ mod tests {
                 loop {
                     match prod.write(i) {
                         Ok(_) => break,
-                        Err(Error::BuffersFull) => continue,
+                        Err(MesoError::BuffersFull) => continue,
                         Err(e) => panic!("unexpected write error: {e:?}"),
                     }
                 }
@@ -179,7 +179,7 @@ mod tests {
                             assert_eq!(v, expected);
                             break;
                         }
-                        Err(Error::NoPendingUpdates) => continue,
+                        Err(MesoError::NoPendingUpdates) => continue,
                         Err(e) => panic!("unexpected read error: {e:?}"),
                     }
                 }
