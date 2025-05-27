@@ -150,6 +150,18 @@ impl Mnemosyne {
         Ok(out)
     }
 
+    /// Reads the most recently written value from the logger as a mutable reference.
+    ///
+    /// Similar to `read_state()` but the reference returned is mutable.
+    pub fn read_state_mut<T: Pod + Zeroable + 'static>(&mut self) -> Result<&mut T, Error> {
+        let (ptr, _) = self.state;
+        if ptr.is_null() {
+            return Err(Error::UninitializedState);
+        }
+        let out = unsafe { &mut *(ptr as *mut T) };
+        Ok(out)
+    }
+
     /// Reads all flushed entries from the tape as immutable references.
     ///
     /// Returns a vector of tuples containing references to the logged data and their
@@ -170,7 +182,7 @@ impl Mnemosyne {
     ///
     /// Similar to `read_tape()`, but returns mutable references that allow
     /// modification of the logged data in place.
-    pub fn read_tape_mut<T: Pod + Zeroable + 'static>(&self) -> Vec<(&mut T, u64)> {
+    pub fn read_tape_mut<T: Pod + Zeroable + 'static>(&mut self) -> Vec<(&mut T, u64)> {
         let mut out = Vec::new();
         for (ptr, time) in &self.tape {
             unsafe {
@@ -250,7 +262,7 @@ mod tests {
         let mnemosyne = Mnemosyne::initialize(size);
         assert_eq!(mnemosyne.size, size);
         assert_eq!(mnemosyne.write, 0);
-        assert!(mnemosyne.arena != ptr::null_mut());
+        assert!(!mnemosyne.arena.is_null());
         assert_eq!(mnemosyne.state, (ptr::null_mut(), 0));
         assert!(mnemosyne.tape.is_empty());
         assert!(mnemosyne.current_writes.is_empty());
@@ -272,7 +284,7 @@ mod tests {
         assert_eq!(mnemosyne.write, std::mem::size_of::<u32>()); // write pointer moved
 
         // Test f32
-        let val_f32 = 3.14f32;
+        let val_f32 = 3.10f32;
         let time_f32 = 200u64;
         mnemosyne.write(val_f32, time_f32);
         assert_eq!(mnemosyne.read_state::<f32>().unwrap(), &val_f32);
