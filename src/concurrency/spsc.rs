@@ -1,24 +1,41 @@
+//! Lock-free circular buffer for single-producer, single-consumer scenarios.
+//!
+//! This module provides `BufferWheel`, a fixed-size circular buffer that enables
+//! lock-free communication between one producer and one consumer thread using
+//! atomic operations. Ideal for high-performance message passing and streaming
+//! data processing.
+
 use std::ptr;
 use std::sync::atomic::Ordering::{AcqRel, Acquire, Relaxed, Release};
 use std::sync::atomic::{AtomicBool, AtomicPtr, AtomicUsize};
 
 use crate::error::Error;
 
+/// A lock-free circular buffer designed for single-producer, single-consumer (SPSC) scenarios.
 #[derive(Debug)]
 pub struct BufferWheel<const N: usize, T> {
+    /// Array of atomic pointers to stored data. Each slot can hold one item.
     buffers: [AtomicPtr<T>; N],
+    /// Current read position in the circular buffer
     read: AtomicUsize,
+    /// Current write position in the circular buffer
     write: AtomicUsize,
+    /// Flag indicating whether the buffer is completely full
     full: AtomicBool,
 }
 
 impl<const N: usize, T> Default for BufferWheel<N, T> {
+    /// Creates a new empty `BufferWheel` with default initialization.
     fn default() -> Self {
         BufferWheel::new()
     }
 }
 
 impl<const N: usize, T> BufferWheel<N, T> {
+    /// Creates a new empty `BufferWheel`.
+    ///
+    /// Initializes all buffer slots to null pointers and sets read/write positions to 0.
+    /// The buffer starts in an empty state.
     pub fn new() -> Self {
         let buffers = array_init::array_init(|_| AtomicPtr::new(ptr::null_mut()));
         Self {
@@ -29,6 +46,11 @@ impl<const N: usize, T> BufferWheel<N, T> {
         }
     }
 
+    /// Writes data to the buffer.
+    ///
+    /// Attempts to write the provided data to the next available slot in the circular buffer.
+    /// The data is moved into the buffer (not copied). If the buffer is full, returns an error
+    /// without consuming the data.
     pub fn write(&self, data: T) -> Result<(), Error> {
         let write = self.write.load(Relaxed);
         if self.full.load(Acquire) {
@@ -50,6 +72,11 @@ impl<const N: usize, T> BufferWheel<N, T> {
         Ok(())
     }
 
+    /// Reads data from the buffer.
+    ///
+    /// Attempts to read the next available data from the circular buffer. The data is moved
+    /// out of the buffer (not copied) and returned to the caller. If the buffer is empty,
+    /// returns an error.
     pub fn read(&self) -> Result<T, Error> {
         let read = self.read.load(Relaxed);
         if read == self.write.load(Acquire) && !self.full.load(Acquire) {

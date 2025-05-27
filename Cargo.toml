@@ -14,3 +14,4 @@ version = "0.3.0"
 [dependencies]
 array-init = "2.1.0"
 thiserror = "2.0.12"
+bytemuck = "1.23.0"

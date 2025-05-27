@@ -1,3 +1,11 @@
+
+//! Lock-free concurrent data structures for work distribution and broadcasting.
+//!
+//! This module provides two complementary lock-free data structures:
+//! - `WorkQueue`: Single-producer, multi-consumer work distribution queue
+//! - `Broadcast`: Single-producer, multi-consumer publish-subscribe channel
+//!
+//! Both use atomic operations to achieve high-performance concurrent communication without locks.
 use std::ptr::null_mut;
 use std::sync::atomic::Ordering::{Acquire, Release, SeqCst};
 use std::sync::atomic::{fence, AtomicPtr};

@@ -98,4 +98,5 @@ impl<T: Scheduleable + Ord, const SLOTS: usize, const HEIGHT: usize> Clock<T, SL
     }
 }
 
+/// A simple one-level timing wheel
 pub type TimingWheel<T, const SLOTS: usize> = Clock<T, SLOTS, 1>;
