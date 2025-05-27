@@ -2,9 +2,7 @@
 [![Crates.io - mesocarp](https://img.shields.io/crates/v/mesocarp?label=mesocarp)](https://crates.io/crates/mesocarp)
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
 
-Atomic primitives for concurrency, synchronization, scheduling, and logging. The cookbook of everything you need to make actor systems scale efficiently.
-
-> Work in Progress!
+High-performance primitives for concurrency, synchronization, scheduling, and logging. The cookbook of everything you need to make actor systems scale efficiently.
 
 ## Contributing
 
