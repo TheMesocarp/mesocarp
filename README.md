@@ -4,7 +4,7 @@
 
 Atomic primitives for concurrency, synchronization, scheduling, and logging. The cookbook of everything you need to make actor systems scale efficiently.
 
-> Work in Progress! Changes between releases may not be stable.
+> Work in Progress!
 
 ## Contributing
 
