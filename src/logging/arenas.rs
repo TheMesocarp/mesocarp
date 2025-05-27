@@ -495,6 +495,6 @@ mod tests {
         assert!(mnemosyne.tape.is_empty());
         assert!(mnemosyne.current_writes.is_empty());
         assert!(mnemosyne.allocations.is_empty()); // All allocations should be deallocated
-        assert!(mnemosyne.arena == ptr::null_mut()); // Arena pointer should be null
+        assert!(mnemosyne.arena.is_null()); // Arena pointer should be null
     }
 }
