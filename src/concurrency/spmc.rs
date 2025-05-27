@@ -1,4 +1,3 @@
-
 //! Lock-free concurrent data structures for work distribution and broadcasting.
 //!
 //! This module provides two complementary lock-free data structures:

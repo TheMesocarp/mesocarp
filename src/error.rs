@@ -19,5 +19,5 @@ pub enum Error {
     #[error("No items found!")]
     NoItems,
     #[error("Type erased LogState pointer is null")]
-    UninitializedState
+    UninitializedState,
 }

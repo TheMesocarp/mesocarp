@@ -7,20 +7,21 @@
 use bytemuck::{Pod, Zeroable};
 
 use std::{
-    alloc::{alloc, dealloc, Layout}, ptr
+    alloc::{alloc, dealloc, Layout},
+    ptr,
 };
 
 use crate::error::Error;
 
 /// A tuple containing a pointer to logged data and its associated timestamp.
-/// 
+///
 /// The pointer points to type-erased data in the arena, and the u64 represents
 /// the time when the data was logged.
 pub type LogState = (*mut u8, u64);
 
 /// `Mnemosyne` is a type-erased arena-based batch logger designed for high-performance
 /// logging of structured data with minimal allocation overhead.
-/// 
+///
 /// This logger uses memory arenas to efficiently store logged data in contiguous memory,
 /// reducing allocation overhead and improving cache locality. Data is stored in a type-erased
 /// manner, allowing different types to be logged to the same arena while maintaining type
@@ -33,14 +34,14 @@ pub struct Mnemosyne {
     size: usize,
     /// Current write position within the arena
     write: usize,
-    /// Current state tuple (pointer to last written data, timestamp) 
+    /// Current state tuple (pointer to last written data, timestamp)
     state: LogState,
     /// Collection of all flushed log entries from previous arenas
     tape: Vec<LogState>,
     /// Collection of all log entries in the current arena
     current_writes: Vec<LogState>,
     /// Collection of all memory allocations for proper cleanup
-    allocations: Vec<(*mut u8, Layout)>
+    allocations: Vec<(*mut u8, Layout)>,
 }
 
 impl Mnemosyne {
@@ -53,18 +54,18 @@ impl Mnemosyne {
         let tape = Vec::new();
         let current_writes = Vec::new();
         Self {
-            arena, 
+            arena,
             size,
             write: 0,
             state,
             tape,
             current_writes,
-            allocations: vec![(arena, layout)]
+            allocations: vec![(arena, layout)],
         }
     }
 
     /// Writes a value with an associated timestamp to the logger.
-    /// 
+    ///
     /// The value is stored in the current arena with proper alignment. If the arena
     /// doesn't have enough space, it will be flushed and a new arena allocated.
     /// If the value is too large for any arena, it will be allocated separately.
@@ -87,12 +88,12 @@ impl Mnemosyne {
             self.flush(true);
             let offset = (align - 1) & !(align - 1);
             end = offset + size;
-            
+
             if end > self.size {
                 unsafe {
                     let layout = Layout::from_size_align(size, align).unwrap();
                     let ptr = alloc(layout);
-                    self.allocations.push((ptr.clone(), layout));
+                    self.allocations.push((ptr, layout));
                     let dst = std::slice::from_raw_parts_mut(ptr, size);
                     let src = std::slice::from_raw_parts(&state as *const T as *const u8, size);
                     dst.copy_from_slice(src);
@@ -116,7 +117,7 @@ impl Mnemosyne {
     }
 
     /// Flushes the current arena, moving all current writes to the tape.
-    /// 
+    ///
     /// This internal method is called automatically when the arena becomes full
     /// or manually during cleanup operations.
     fn flush(&mut self, reset: bool) {
@@ -137,7 +138,7 @@ impl Mnemosyne {
     }
 
     /// Reads the most recently written value from the logger.
-    /// 
+    ///
     /// Returns a reference to the last value that was written to the logger,
     /// cast to the specified type.
     pub fn read_state<T: Pod + Zeroable + 'static>(&self) -> Result<&T, Error> {
@@ -150,7 +151,7 @@ impl Mnemosyne {
     }
 
     /// Reads all flushed entries from the tape as immutable references.
-    /// 
+    ///
     /// Returns a vector of tuples containing references to the logged data and their
     /// associated timestamps. Only includes data that has been flushed to the tape,
     /// not data in the current arena.
@@ -166,7 +167,7 @@ impl Mnemosyne {
     }
 
     /// Reads all flushed entries from the tape as mutable references.
-    /// 
+    ///
     /// Similar to `read_tape()`, but returns mutable references that allow
     /// modification of the logged data in place.
     pub fn read_tape_mut<T: Pod + Zeroable + 'static>(&self) -> Vec<(&mut T, u64)> {
@@ -181,7 +182,7 @@ impl Mnemosyne {
     }
 
     /// Cleans up the logger and returns all logged data by value.
-    /// 
+    ///
     /// This method performs a complete cleanup of the logger, collecting all logged
     /// data (both from the current arena and the tape) and returning it as owned values.
     /// After calling this method, the logger is reset to its initial state with all
@@ -199,14 +200,14 @@ impl Mnemosyne {
 
         for (i, layout) in &self.allocations {
             unsafe { dealloc(*i, *layout) };
-        } 
+        }
 
         self.write = 0;
         self.state = (ptr::null_mut(), 0);
         self.tape.clear();
         self.current_writes.clear();
         self.allocations.clear();
-        return out
+        out
     }
 }
 
@@ -216,7 +217,7 @@ impl Drop for Mnemosyne {
         self.flush(false);
         for (i, layout) in &self.allocations {
             unsafe { dealloc(*i, *layout) };
-        } 
+        }
 
         self.write = 0;
         self.state = (ptr::null_mut(), 0);
@@ -302,7 +303,10 @@ mod tests {
     fn test_read_state_uninitialized() {
         let size = 64;
         let mnemosyne = Mnemosyne::initialize(size);
-        assert_eq!(mnemosyne.read_state::<u32>(), Err(Error::UninitializedState));
+        assert_eq!(
+            mnemosyne.read_state::<u32>(),
+            Err(Error::UninitializedState)
+        );
     }
 
     #[test]
@@ -364,18 +368,30 @@ mod tests {
         let size = 256;
         let mut mnemosyne = Mnemosyne::initialize(size);
 
-        let s1 = MyState { x: 1, y: 1.0, z: 10 };
+        let s1 = MyState {
+            x: 1,
+            y: 1.0,
+            z: 10,
+        };
         let t1 = 100;
         mnemosyne.write(s1, t1);
 
-        let s2 = MyState { x: 2, y: 2.0, z: 20 };
+        let s2 = MyState {
+            x: 2,
+            y: 2.0,
+            z: 20,
+        };
         let t2 = 200;
         mnemosyne.write(s2, t2);
 
         // Flush to move current_writes to tape
         mnemosyne.flush(false);
 
-        let s3 = MyState { x: 3, y: 3.0, z: 30 };
+        let s3 = MyState {
+            x: 3,
+            y: 3.0,
+            z: 30,
+        };
         let t3 = 300;
         mnemosyne.write(s3, t3); // This will be in current_writes, not yet on tape
 
@@ -393,11 +409,19 @@ mod tests {
         let size = 256;
         let mut mnemosyne = Mnemosyne::initialize(size);
 
-        let s1 = MyState { x: 1, y: 1.0, z: 10 };
+        let s1 = MyState {
+            x: 1,
+            y: 1.0,
+            z: 10,
+        };
         let t1 = 100;
         mnemosyne.write(s1, t1);
 
-        let s2 = MyState { x: 2, y: 2.0, z: 20 };
+        let s2 = MyState {
+            x: 2,
+            y: 2.0,
+            z: 20,
+        };
         let t2 = 200;
         mnemosyne.write(s2, t2);
 
@@ -421,15 +445,27 @@ mod tests {
         let size = 64;
         let mut mnemosyne = Mnemosyne::initialize(size);
 
-        let s1 = MyState { x: 1, y: 1.0, z: 10 };
+        let s1 = MyState {
+            x: 1,
+            y: 1.0,
+            z: 10,
+        };
         let t1 = 100;
         mnemosyne.write(s1, t1);
 
-        let s2 = MyState { x: 2, y: 2.0, z: 20 };
+        let s2 = MyState {
+            x: 2,
+            y: 2.0,
+            z: 20,
+        };
         let t2 = 200;
         mnemosyne.write(s2, t2);
 
-        let s3 = MyState { x: 3, y: 3.0, z: 30 }; // This will cause a flush and be in new arena
+        let s3 = MyState {
+            x: 3,
+            y: 3.0,
+            z: 30,
+        }; // This will cause a flush and be in new arena
         let t3 = 300;
         mnemosyne.write(s3, t3);
 
