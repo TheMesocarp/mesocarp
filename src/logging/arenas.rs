@@ -1,9 +1,8 @@
-//! High-performance arena-based batch logger for structured data.
+//! arena-based batch loggers for `bytemuck::Pod` data.
 //!
 //! This module provides `Mnemosyne`, a type-erased logger that uses memory arenas
-//! to efficiently store timestamped data with minimal allocation overhead. Ideal
-//! for performance-critical applications like game engines, real-time systems,
-//! and high-frequency data collection.
+//! to store timestamped data with minimal allocation overhead. Ideal
+//! for performance-critical applications.
 use bytemuck::{Pod, Zeroable};
 
 use std::{
@@ -11,7 +10,7 @@ use std::{
     ptr,
 };
 
-use crate::error::Error;
+use crate::error::MesoError;
 
 /// A tuple containing a pointer to logged data and its associated timestamp.
 ///
@@ -25,7 +24,7 @@ pub type LogState = (*mut u8, u64);
 /// This logger uses memory arenas to efficiently store logged data in contiguous memory,
 /// reducing allocation overhead and improving cache locality. Data is stored in a type-erased
 /// manner, allowing different types to be logged to the same arena while maintaining type
-/// safety through the Pod + Zeroable trait bounds.
+/// safety through the `Pod + Zeroable` trait bounds.
 #[derive(Debug)]
 pub struct Mnemosyne {
     /// Pointer to the current arena memory block
@@ -141,10 +140,10 @@ impl Mnemosyne {
     ///
     /// Returns a reference to the last value that was written to the logger,
     /// cast to the specified type.
-    pub fn read_state<T: Pod + Zeroable + 'static>(&self) -> Result<&T, Error> {
+    pub fn read_state<T: Pod + Zeroable + 'static>(&self) -> Result<&T, MesoError> {
         let (ptr, _) = self.state;
         if ptr.is_null() {
-            return Err(Error::UninitializedState);
+            return Err(MesoError::UninitializedState);
         }
         let out = unsafe { &*(ptr as *const T) };
         Ok(out)
@@ -153,10 +152,10 @@ impl Mnemosyne {
     /// Reads the most recently written value from the logger as a mutable reference.
     ///
     /// Similar to `read_state()` but the reference returned is mutable.
-    pub fn read_state_mut<T: Pod + Zeroable + 'static>(&mut self) -> Result<&mut T, Error> {
+    pub fn read_state_mut<T: Pod + Zeroable + 'static>(&mut self) -> Result<&mut T, MesoError> {
         let (ptr, _) = self.state;
         if ptr.is_null() {
-            return Err(Error::UninitializedState);
+            return Err(MesoError::UninitializedState);
         }
         let out = unsafe { &mut *(ptr as *mut T) };
         Ok(out)
@@ -317,7 +316,7 @@ mod tests {
         let mnemosyne = Mnemosyne::initialize(size);
         assert_eq!(
             mnemosyne.read_state::<u32>(),
-            Err(Error::UninitializedState)
+            Err(MesoError::UninitializedState)
         );
     }
 

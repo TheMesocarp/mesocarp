@@ -1,6 +1,13 @@
+//! Hierarchical timing wheel for efficient event scheduling and time-based processing.
+//!
+//! This module provides a `Clock` data structure that implements a hierarchical timing wheel,
+//! with `SLOTS` ticks, and `HEIGHT` hands. This enabling O(1) scheduling and processing
+//! of time-ordered events, leveraging a bucket sort to minimize the necessary instructions.
+//! This design supports multiple time granularities through a hierarchy of wheels, making it
+//! suitable for high-performance time-based systems.
 use std::{cmp::Reverse, collections::BTreeSet};
 
-use crate::error::Error;
+use crate::error::MesoError;
 
 /// Trait for any time-series object for processing.
 pub trait Scheduleable {
@@ -18,9 +25,9 @@ pub struct Clock<T: Scheduleable + Ord, const SLOTS: usize, const HEIGHT: usize>
 
 impl<T: Scheduleable + Ord, const SLOTS: usize, const HEIGHT: usize> Clock<T, SLOTS, HEIGHT> {
     /// New HTW from time-step size and terminal time.
-    pub fn new() -> Result<Self, Error> {
+    pub fn new() -> Result<Self, MesoError> {
         if HEIGHT < 1 {
-            return Err(Error::NoClockSlots);
+            return Err(MesoError::NoClockSlots);
         }
         let wheels = std::array::from_fn(|_| std::array::from_fn(|_| Vec::new()));
         let current = [0_usize; HEIGHT];
@@ -54,15 +61,15 @@ impl<T: Scheduleable + Ord, const SLOTS: usize, const HEIGHT: usize> Clock<T, SL
         Err(event)
     }
     /// consume the next step's pending events.
-    pub fn tick(&mut self) -> Result<Vec<T>, Error> {
+    pub fn tick(&mut self) -> Result<Vec<T>, MesoError> {
         let row: &mut [Vec<T>] = &mut self.wheels[0];
         let events = std::mem::take(&mut row[self.current_idxs[0]]);
         if !events.is_empty() && events[0].time() < self.time {
             println!("Time travel detected");
-            return Err(Error::TimeTravel);
+            return Err(MesoError::TimeTravel);
         }
         if events.is_empty() {
-            return Err(Error::NoItems);
+            return Err(MesoError::NoItems);
         }
         Ok(events)
     }

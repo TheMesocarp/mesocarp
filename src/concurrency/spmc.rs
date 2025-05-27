@@ -11,7 +11,7 @@ use std::sync::atomic::{fence, AtomicPtr};
 use std::sync::{atomic::AtomicUsize, Arc};
 use std::thread::yield_now;
 
-use crate::error::Error;
+use crate::error::MesoError;
 
 /// Single‐producer, multi‐consumer work queue.
 /// Uses sequence numbers to prevent a race condition during buffer wrap-around.
@@ -30,9 +30,9 @@ pub struct Worker<const SLOTS: usize, T> {
 
 impl<const SLOTS: usize, T> WorkQueue<SLOTS, T> {
     /// Create a new queue. SLOTS must be > 0.
-    pub fn new() -> Result<Arc<Self>, Error> {
+    pub fn new() -> Result<Arc<Self>, MesoError> {
         if SLOTS == 0 {
-            return Err(Error::NoPendingUpdates);
+            return Err(MesoError::NoPendingUpdates);
         }
         let buffers = std::array::from_fn(|_| AtomicPtr::new(null_mut()));
         let sequence_numbers = std::array::from_fn(|_| AtomicUsize::new(0));
@@ -48,11 +48,11 @@ impl<const SLOTS: usize, T> WorkQueue<SLOTS, T> {
     /// Push a job into the queue.
     /// Returns Err if the queue is full.
     /// Uses sequence numbers to coordinate with consumers.
-    pub fn push(&self, job: T) -> Result<(), Error> {
+    pub fn push(&self, job: T) -> Result<(), MesoError> {
         let tail = self.tail.load(Acquire);
         let head = self.head.load(Acquire);
         if tail.wrapping_sub(head) >= SLOTS {
-            return Err(Error::BuffersFull);
+            return Err(MesoError::BuffersFull);
         }
         let idx = tail % SLOTS;
         let seq = tail / SLOTS;
@@ -68,7 +68,7 @@ impl<const SLOTS: usize, T> WorkQueue<SLOTS, T> {
                 unsafe {
                     drop(Box::from_raw(boxed));
                 }
-                Err(Error::BuffersFull)
+                Err(MesoError::BuffersFull)
             }
         }
     }
@@ -135,9 +135,9 @@ pub struct Broadcast<const SLOTS: usize, T: Clone> {
 
 impl<const SLOTS: usize, T: Clone> Broadcast<SLOTS, T> {
     /// Spawns a new `Broadcast` with empty buffer slots
-    pub fn new() -> Result<Self, Error> {
+    pub fn new() -> Result<Self, MesoError> {
         if SLOTS == 0 {
-            return Err(Error::NoPendingUpdates);
+            return Err(MesoError::NoPendingUpdates);
         }
         let buffers = std::array::from_fn(|_| AtomicPtr::new(null_mut()));
         Ok(Self {
@@ -212,7 +212,7 @@ impl<const SLOTS: usize, T: Clone> Subscriber<SLOTS, T> {
 #[cfg(test)]
 mod broadcast_tests {
     use super::*;
-    use crate::error::Error as WheelError;
+    use crate::error::MesoError as WheelError;
 
     use std::sync::atomic::Ordering;
     use std::thread;
@@ -495,7 +495,7 @@ mod broadcast_tests {
 #[cfg(test)]
 mod worker_queue_tests {
     use super::*;
-    use crate::error::Error as QueueError; // Assuming your error enum setup
+    use crate::error::MesoError as QueueError;
 
     use std::collections::HashSet;
     use std::sync::atomic::Ordering;
