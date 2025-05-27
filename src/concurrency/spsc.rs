@@ -29,12 +29,12 @@ impl<const N: usize, T> BufferWheel<N, T> {
         }
     }
 
-    pub fn write(&self, edge_info: T) -> Result<(), Error> {
+    pub fn write(&self, data: T) -> Result<(), Error> {
         let write = self.write.load(Relaxed);
         if self.full.load(Acquire) {
             return Err(Error::BuffersFull);
         }
-        let new_ptr = Box::into_raw(Box::new(edge_info));
+        let new_ptr = Box::into_raw(Box::new(data));
         let old_ptr = self.buffers[write].swap(new_ptr, AcqRel);
         if !old_ptr.is_null() {
             unsafe {
