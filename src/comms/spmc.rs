@@ -11,7 +11,7 @@ use std::sync::atomic::{fence, AtomicPtr};
 use std::sync::{atomic::AtomicUsize, Arc};
 use std::thread::yield_now;
 
-use crate::error::MesoError;
+use crate::MesoError;
 
 /// Single‐producer, multi‐consumer work queue.
 /// Uses sequence numbers to prevent a race condition during buffer wrap-around.
@@ -212,7 +212,7 @@ impl<const SLOTS: usize, T: Clone> Subscriber<SLOTS, T> {
 #[cfg(test)]
 mod broadcast_tests {
     use super::*;
-    use crate::error::MesoError as WheelError;
+    use crate::MesoError as WheelError;
 
     use std::sync::atomic::Ordering;
     use std::thread;
@@ -495,7 +495,7 @@ mod broadcast_tests {
 #[cfg(test)]
 mod worker_queue_tests {
     use super::*;
-    use crate::error::MesoError as QueueError;
+    use crate::MesoError as QueueError;
 
     use std::collections::HashSet;
     use std::sync::atomic::Ordering;

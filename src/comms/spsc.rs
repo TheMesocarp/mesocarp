@@ -9,7 +9,7 @@ use std::ptr;
 use std::sync::atomic::Ordering::{AcqRel, Acquire, Relaxed, Release};
 use std::sync::atomic::{AtomicBool, AtomicPtr, AtomicUsize};
 
-use crate::error::MesoError;
+use crate::MesoError;
 
 /// A lock-free circular buffer designed for single-producer, single-consumer (SPSC) scenarios.
 #[derive(Debug)]
