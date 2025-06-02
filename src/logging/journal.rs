@@ -1,3 +1,8 @@
+//! arena-based batch loggers for `bytemuck::Pod` data.
+//!
+//! This module provides `Journal`, a type-erased logger that uses memory arenas
+//! to store timestamped data with minimal allocation overhead. Ideal
+//! for performance-critical optimistic applications.
 use std::{
     alloc::{alloc, dealloc, Layout},
     collections::BTreeSet,
@@ -103,6 +108,10 @@ impl Allocation {
     }
 }
 
+/// `Journal` is a type-erased arena-based batch logger designed for high-performance logging of structured data with minimal allocation overhead.
+///
+/// This logger uses memory arenas to efficiently store logged data in contiguous memory, reducing allocation overhead and improving cache locality.
+/// Data is stored in a type-erased manner, allowing different types to be logged to the same arena while maintaining type safety through the `Pod + Zeroable` trait bounds.
 pub struct Journal {
     arena: *mut u8,
     active_id: usize,
@@ -115,6 +124,7 @@ pub struct Journal {
 }
 
 impl Journal {
+    /// Creates a new `Journal` logger with the specified arena size.
     pub fn init(size: usize) -> Self {
         let allocation = unsafe { Allocation::new(size, 8, AllocKind::default(), u64::MAX) };
         let arena = allocation.ptr;
@@ -136,6 +146,11 @@ impl Journal {
         }
     }
 
+    /// Writes a value with an associated timestamp to the logger.
+    ///
+    /// The value is stored in the current arena with proper alignment. If the arena
+    /// doesn't have enough space, it will be flushed and a new arena allocated.
+    /// If the value is too large for any arena, it will be allocated separately.
     pub fn write<T: Pod + Zeroable + 'static>(
         &mut self,
         state: T,
@@ -206,6 +221,10 @@ impl Journal {
         }
     }
 
+    /// Flushes the current arena, moving all current writes to the tape.
+    ///
+    /// This internal method is called automatically when the arena becomes full
+    /// or manually during cleanup operations.
     fn flush(&mut self, allocate_new: bool) {
         self.tape.extend(self.current_writes.drain(..));
         self.offset = 0;
@@ -260,6 +279,11 @@ impl Journal {
         Ok(out)
     }
 
+    /// Reads all flushed entries from the tape as immutable references.
+    ///
+    /// Returns a vector of tuples containing references to the logged data and their
+    /// associated timestamps. Only includes data that has been flushed to the tape,
+    /// not data in the current arena.
     pub fn read_tape<T: Pod + Zeroable + 'static>(&self) -> Vec<(&T, u64)> {
         self.tape
             .iter()
@@ -270,6 +294,10 @@ impl Journal {
             .collect()
     }
 
+    /// Reads all flushed entries from the tape as mutable references.
+    ///
+    /// Similar to `read_tape()`, but returns mutable references that allow
+    /// modification of the logged data in place.
     pub fn read_tape_mut<T: Pod + Zeroable + 'static>(&mut self) -> Vec<(&mut T, u64)> {
         self.tape
             .iter()
@@ -280,6 +308,7 @@ impl Journal {
             .collect()
     }
 
+    /// Reads all logged entries in timestamped order as immutable references
     pub fn read_all<T: Pod + Zeroable + 'static>(&self) -> Vec<(&T, u64)> {
         self.tape
             .iter()
@@ -291,7 +320,8 @@ impl Journal {
             .collect()
     }
 
-    pub fn check_chop_tail(&mut self, horizon: u64) {
+    /// Deallocates arenas and removes logs with time stamp before a provided `horizon: usize` time
+    fn check_chop_tail(&mut self, horizon: u64) {
         // Step 1: Find and deallocate allocations with end time < horizon
         for alloc in &mut self.allocations {
             if !alloc.active {
@@ -358,12 +388,13 @@ impl Journal {
         out
     }
 
+    /// Rolls back the current state to what was active most recently at the provided `time: usize`.
     pub fn rollback(&mut self, time: u64) {
         if time >= self.state.time {
             return; // Nothing to rollback
         }
 
-        // Step 1: Deallocate all allocations that started after rollback time (this is right, dont fuck with this)
+        // Deallocate all allocations that started after rollback time (this is right, dont fuck with this)
         for alloc in &mut self.allocations {
             if alloc.active && alloc.start > time {
                 unsafe {
@@ -373,17 +404,15 @@ impl Journal {
             }
         }
 
-        // Step 2: Clean up entries after rollback time
-        // For tape, use split_off to keep only entries before time
+        // Clean up entries after rollback time
         let split_point = LogState {
             state: null_mut(),
             meta: MetaLog::default(),
-            time: time + 1, // We want to keep everything <= time, so split at time + 1
+            time: time + 1,
         };
         let to_remove = self.tape.split_off(&split_point);
-        drop(to_remove); // Explicitly drop the removed portion
+        drop(to_remove);
 
-        // For current_writes, we need to be more careful about counter updates
         let mut writes_to_remove = Vec::new();
         for (i, log) in self.current_writes.iter().enumerate().rev() {
             if log.time > time {
@@ -399,19 +428,17 @@ impl Journal {
             }
         }
 
-        // Remove entries in reverse order to maintain indices
         for i in writes_to_remove {
             self.current_writes.remove(i);
         }
 
-        // Step 3: Find the new current state (last entry with time <= rollback time)
+        // Find the new current state (last entry with time <= rollback time)
         let new_state = self
             .current_writes
             .iter()
             .rev()
             .find(|log| log.time <= time)
             .or_else(|| {
-                // Use range to get all entries <= time, then take the last one
                 self.tape
                     .range(
                         ..=LogState {
@@ -456,8 +483,8 @@ impl Journal {
     }
 }
 
-// Drop to ensure no memory leaks
 impl Drop for Journal {
+    /// Automatic cleanup when the logger is dropped.
     fn drop(&mut self) {
         for alloc in &mut self.allocations {
             if alloc.active {
