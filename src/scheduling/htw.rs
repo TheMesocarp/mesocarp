@@ -7,7 +7,7 @@
 //! suitable for high-performance time-based systems.
 use std::{cmp::Reverse, collections::BTreeSet};
 
-use crate::error::MesoError;
+use crate::MesoError;
 
 use super::Scheduleable;
 #[derive(Debug)]
