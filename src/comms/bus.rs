@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use bytemuck::{Pod, Zeroable};
 
-use crate::{logging::arenas::Mnemosyne, scheduling::{htw::Clock, Scheduleable}};
+use crate::{logging::journal::Journal, scheduling::{htw::Clock, Scheduleable}};
 
 use super::spsc::BufferWheel;
 
@@ -21,6 +21,6 @@ unsafe impl<T: Pod + Zeroable + 'static> Zeroable for Message<T> {}
 
 pub struct LocalBus<T: Scheduleable + Pod + Zeroable + Ord + 'static, const MSG_SLOTS: usize, const CLOCK_SLOTS: usize, const CLOCK_HEIGHT: usize> {
     producers: [Vec<Arc<BufferWheel<MSG_SLOTS, Message<T>>>>; 2],
-    tape: Mnemosyne,
+    tape: Journal,
     schedule: Clock<T, CLOCK_SLOTS, CLOCK_HEIGHT>,
 }
