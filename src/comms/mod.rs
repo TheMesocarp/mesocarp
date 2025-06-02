@@ -5,4 +5,3 @@
 //! channel, as well as a work queue channel.
 pub mod spmc;
 pub mod spsc;
-pub mod bus;

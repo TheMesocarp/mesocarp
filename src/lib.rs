@@ -7,7 +7,7 @@ pub mod logging;
 pub mod scheduling;
 
 #[derive(Debug, Error)]
-struct IoError(std::io::Error);
+pub struct IoError(std::io::Error);
 
 impl PartialEq for IoError {
     fn eq(&self, other: &Self) -> bool {
@@ -58,7 +58,7 @@ pub enum MesoError {
     #[error("I/O error during shared memory operation {:?}", err)]
     Io {
         #[from]
-        err: IoError
+        err: IoError,
     },
     #[error("Shared memory header validation failed: {reason}")]
     HeaderMismatch { reason: String },
@@ -72,32 +72,6 @@ pub enum MesoError {
     #[error("Failed to convert name to CString {source}")]
     NulError {
         #[from]
-        source: NulError
-    },   
-}
-
-impl MesoError {
-    #[cfg(unix)]
-    fn from_errno(errno: i32, name: &str, context: &str) -> Self {
-        match errno {
-            libc::ENOENT => MesoError::NotFound { name: name.to_string() },
-            libc::EACCES => MesoError::PermissionDenied { name: name.to_string() },
-            libc::EEXIST => MesoError::AlreadyExists { name: name.to_string() },
-            libc::EINVAL => MesoError::InvalidParameter { description: format!("Invalid argument for {} on '{}': {}", context, name, std::io::Error::from_raw_os_error(errno)) },
-            _ => MesoError::Io { err: IoError(std::io::Error::from_raw_os_error(errno)) },
-        }
-    }
-
-    #[cfg(windows)]
-    fn from_last_error(name: &str, context: &str) -> Self {
-        use winapi::shared::winerror;
-        let error_code = unsafe { winapi::um::errhandlingapi::GetLastError() };
-        match error_code {
-            winerror::ERROR_FILE_NOT_FOUND => MesoError::NotFound { name: name.to_string() },
-            winerror::ERROR_ACCESS_DENIED => MesoError::PermissionDenied { name: name.to_string() },
-            winerror::ERROR_ALREADY_EXISTS => MesoError::AlreadyExists { name: name.to_string() }, // Should be handled by logic, but as error if unexpected
-            winerror::ERROR_INVALID_PARAMETER => MesoError::InvalidParameter { description: format!("Invalid parameter for {} on '{}': code {}", context, name, error_code) },
-            _ => MesoError::Io { source: std::io::Error::from_raw_os_error(error_code as i32) },
-        }
-    }
+        source: NulError,
+    },
 }
