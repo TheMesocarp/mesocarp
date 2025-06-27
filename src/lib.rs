@@ -6,6 +6,7 @@ pub mod comms;
 pub mod logging;
 pub mod scheduling;
 
+/// Wrapper type for `std::io::Error`
 #[derive(Debug, Error)]
 pub struct IoError(std::io::Error);
 
@@ -74,4 +75,6 @@ pub enum MesoError {
         #[from]
         source: NulError,
     },
+    #[error("Improper handling of Message passing. Either fix a `to: usize` address or specify broadcast")]
+    ImproperMessagePassing
 }

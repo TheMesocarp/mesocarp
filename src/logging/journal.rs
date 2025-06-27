@@ -58,7 +58,7 @@ impl Default for MetaLog {
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
-pub struct LogState {
+struct LogState {
     state: *mut u8,
     meta: MetaLog,
     time: u64,

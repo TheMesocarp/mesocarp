@@ -32,6 +32,10 @@ impl<T: Scheduleable + Ord, const SLOTS: usize, const HEIGHT: usize> Clock<T, SL
             current_idxs: current,
         })
     }
+    /// Fix clock start to a specific timestamp
+    pub fn set_time(&mut self, time: u64) {
+        self.time = time
+    }
     /// Find corresponding slot based on `Scheduleable::time()' output, and insert.
     pub fn insert(&mut self, event: T) -> Result<(), T> {
         let time = event.time();
