@@ -58,7 +58,7 @@ impl<const SLOTS: usize, T: Message> ThreadWorld<SLOTS, T> {
         // Fix: Check bounds before indexing
         if thread_id >= self.id_to_idx.len() || self.id_to_idx[thread_id] == usize::MAX {
             return Err(MesoError::NotFound {
-                name: format!("Agent ID {} not found within this thread world", thread_id),
+                name: format!("Agent ID {thread_id} not found within this thread world"),
             });
         }
 
@@ -85,7 +85,7 @@ impl<const SLOTS: usize, T: Message> ThreadWorld<SLOTS, T> {
                         // Fix: Validate target exists
                         if to >= self.id_to_idx.len() || self.id_to_idx[to] == usize::MAX {
                             return Err(MesoError::NotFound {
-                                name: format!("Target agent {} not found", to),
+                                name: format!("Target agent {to} not found"),
                             });
                         }
                         let target_idx = self.id_to_idx[to];
