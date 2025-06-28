@@ -259,8 +259,8 @@ mod tests {
         assert!(user1.poll().is_none());
 
         // Poll world to route messages
-        world.poll().unwrap();
-
+        let out = world.poll().unwrap();
+        world.deliver(out).unwrap();
         // Now user1 should see it
         let received = user1.poll().unwrap();
         assert!(received.contains(&msg));
