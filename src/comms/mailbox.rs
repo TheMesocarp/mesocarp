@@ -17,7 +17,7 @@ pub trait Message: Scheduleable + Ord + Clone {
 
 pub struct ThreadWorld<const SLOTS: usize, T: Message> {
     agents: Vec<usize>,
-    id_to_idx: Vec<usize>, // Need to fix initialization
+    id_to_idx: Vec<usize>,
     dirin: Vec<Arc<BufferWheel<SLOTS, T>>>,
     dirout: Vec<Arc<BufferWheel<SLOTS, T>>>,
     broadcaster: Arc<Broadcast<SLOTS, T>>,
@@ -27,8 +27,7 @@ impl<const SLOTS: usize, T: Message> ThreadWorld<SLOTS, T> {
     pub fn new(agent_ids: Vec<usize>) -> Result<Self, MesoError> {
         let max_id = agent_ids.iter().max().copied().unwrap_or(0);
 
-        // Fix: Initialize id_to_idx properly
-        let mut id_to_idx = vec![usize::MAX; max_id + 1]; // Use MAX as "not found"
+        let mut id_to_idx = vec![usize::MAX; max_id + 1];
         for (idx, &id) in agent_ids.iter().enumerate() {
             id_to_idx[id] = idx;
         }
@@ -37,7 +36,6 @@ impl<const SLOTS: usize, T: Message> ThreadWorld<SLOTS, T> {
         let mut dirin = Vec::with_capacity(len);
         let mut dirout = Vec::with_capacity(len);
 
-        // Create channels for each agent (dense array)
         for _ in 0..len {
             dirin.push(Arc::new(BufferWheel::new()));
             dirout.push(Arc::new(BufferWheel::new()));
@@ -55,7 +53,6 @@ impl<const SLOTS: usize, T: Message> ThreadWorld<SLOTS, T> {
     }
 
     pub fn get_user(&self, thread_id: usize) -> Result<ThreadWorldUser<SLOTS, T>, MesoError> {
-        // Fix: Check bounds before indexing
         if thread_id >= self.id_to_idx.len() || self.id_to_idx[thread_id] == usize::MAX {
             return Err(MesoError::NotFound {
                 name: format!("Agent ID {thread_id} not found within this thread world"),
@@ -75,7 +72,7 @@ impl<const SLOTS: usize, T: Message> ThreadWorld<SLOTS, T> {
         })
     }
 
-    pub fn poll(&mut self) -> Result<(), MesoError> {
+    pub fn poll(&mut self) -> Result<Vec<(usize, T)>, MesoError> {
         let mut to_write = Vec::new();
 
         for outbox in self.dirout.iter() {
@@ -97,19 +94,20 @@ impl<const SLOTS: usize, T: Message> ThreadWorld<SLOTS, T> {
                     }
                 }
                 Err(MesoError::NoPendingUpdates) => {
-                    continue; // No messages in this outbox
+                    continue;
                 }
                 Err(err) => {
                     return Err(err);
                 }
             }
         }
+        Ok(to_write)
+    }
 
-        // Deliver direct messages
-        for (target_idx, msg) in to_write {
+    pub fn deliver(&mut self, msgs: Vec<(usize, T)>) -> Result<(), MesoError> {
+        for (target_idx, msg) in msgs {
             self.dirin[target_idx].write(msg)?;
         }
-
         Ok(())
     }
 
@@ -140,7 +138,6 @@ impl<const SLOTS: usize, T: Message> ThreadWorldUser<SLOTS, T> {
             counter += 1;
             let mut clean = false;
 
-            // Check direct messages (inbox)
             match self.comms[0].read() {
                 Ok(msg) => match &mut output {
                     Some(set) => {
@@ -170,7 +167,7 @@ impl<const SLOTS: usize, T: Message> ThreadWorldUser<SLOTS, T> {
                     }
                 }
             } else if clean {
-                break; // No messages from either source
+                break;
             }
         }
 
