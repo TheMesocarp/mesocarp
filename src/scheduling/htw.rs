@@ -102,6 +102,31 @@ impl<T: Scheduleable + Ord, const SLOTS: usize, const HEIGHT: usize> Clock<T, SL
             }
         }
     }
+
+    /// Rollback the clock. (this is done via a brute force dump and re-sort,
+    /// which is certainly not the most efficient. however, the alternative via indexing,
+    /// similar to the insertion and rotation methods, is much more complicated to do right.
+    /// will certainly come back to it).
+    pub fn rollback(&mut self, overflow: &mut BTreeSet<Reverse<T>>, new_time: u64) {
+        if new_time >= self.time {
+            return;
+        }
+
+        let all_events = self
+            .wheels
+            .iter_mut()
+            .flat_map(|wheel| wheel.iter_mut().flat_map(std::mem::take))
+            .collect::<Vec<T>>();
+
+        self.time = new_time;
+        self.current_idxs = [0; HEIGHT];
+
+        for event in all_events {
+            if let Err(e) = self.insert(event) {
+                overflow.insert(Reverse(e));
+            }
+        }
+    }
 }
 
 /// A simple one-level timing wheel

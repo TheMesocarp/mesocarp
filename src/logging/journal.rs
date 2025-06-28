@@ -481,6 +481,110 @@ impl Journal {
             }
         }
     }
+
+    /// Rolls back the current state to the most recent entry at or before `time`.
+    /// This method removes all log entries with a timestamp greater than `time`.
+    /// Instead of dropping the removed entries, it reconstructs and returns them as a `Vec<(T, u64)>`.
+    pub fn rollback_return<T: Pod + Zeroable + 'static>(&mut self, time: u64) -> Vec<(T, u64)> {
+        if time >= self.state.time {
+            return Vec::new(); // Nothing to rollback
+        }
+
+        let mut rolled_back_entries = Vec::new();
+
+        // Deallocate all allocations that started entirely after the rollback time.
+        for alloc in &mut self.allocations {
+            if alloc.active && alloc.start > time {
+                unsafe {
+                    dealloc(alloc.ptr, alloc.layout);
+                }
+                alloc.active = false;
+            }
+        }
+
+        // Collect and remove rolled back entries from the tape.
+        let split_point = LogState {
+            state: null_mut(),
+            meta: MetaLog::default(),
+            time: time + 1,
+        };
+        let to_remove_from_tape = self.tape.split_off(&split_point);
+        for log_state in to_remove_from_tape {
+            unsafe {
+                let data = ptr::read(log_state.state as *mut T);
+                rolled_back_entries.push((data, log_state.time));
+            }
+        }
+
+        // Collect and remove rolled back entries from the current writes.
+        let mut i = self.current_writes.len();
+        while i > 0 {
+            i -= 1;
+            if self.current_writes[i].time > time {
+                let log = self.current_writes.remove(i);
+                if self.allocations[log.meta.alloc_idx].active {
+                    if let AllocKind::Arena { counter, .. } =
+                        &mut self.allocations[log.meta.alloc_idx].kind
+                    {
+                        *counter = counter.saturating_sub(1);
+                    }
+                }
+                unsafe {
+                    let data = ptr::read(log.state as *mut T);
+                    rolled_back_entries.push((data, log.time));
+                }
+            }
+        }
+
+        // Find the new current state.
+        let new_state = self
+            .current_writes
+            .iter()
+            .rev()
+            .find(|log| log.time <= time)
+            .or_else(|| {
+                self.tape
+                    .range(
+                        ..=LogState {
+                            state: null_mut(),
+                            meta: MetaLog::default(),
+                            time,
+                        },
+                    )
+                    .next_back()
+            })
+            .copied();
+
+        match new_state {
+            Some(state) => {
+                self.state = state;
+
+                let alloc_idx = state.meta.alloc_idx;
+                if self.allocations[alloc_idx].active {
+                    self.arena = self.allocations[alloc_idx].ptr;
+                    self.active_id = alloc_idx;
+                    self.offset = state.meta.offset + state.meta.size;
+
+                    if let AllocKind::Arena { end, .. } = &mut self.allocations[alloc_idx].kind {
+                        *end = state.time;
+                    }
+                } else {
+                    self.arena = null_mut();
+                    self.offset = 0;
+                }
+            }
+            None => {
+                self.state = LogState::default();
+                self.arena = null_mut();
+                self.offset = 0;
+            }
+        }
+
+        // Sort the collected entries by timestamp as they were collected from two different, partially ordered sources.
+        rolled_back_entries.sort_unstable_by_key(|k| k.1);
+
+        rolled_back_entries
+    }
 }
 
 impl Drop for Journal {
@@ -1224,5 +1328,31 @@ mod tests {
         assert_eq!(tape.len(), 2);
         assert_eq!(tape[0].0, &10); // New values, not old
         assert_eq!(tape[1].0, &20);
+    }
+
+    #[test]
+    fn test_rollback_return_claims_data() {
+        let mut journal = Journal::init(256);
+
+        let s1 = SmallState { x: 1, y: 1.0 };
+        journal.write(s1, 100, None);
+
+        let s2 = SmallState { x: 2, y: 2.0 };
+        journal.write(s2, 200, None);
+
+        let s3 = SmallState { x: 3, y: 3.0 };
+        journal.write(s3, 300, None);
+
+        // Rollback and claim the data
+        let claimed_data = journal.rollback_return::<SmallState>(150);
+
+        // Verify the claimed data
+        assert_eq!(claimed_data.len(), 2);
+        assert_eq!(claimed_data[0], (s2, 200));
+        assert_eq!(claimed_data[1], (s3, 300));
+
+        // Verify the state of the journal after rollback
+        assert_eq!(journal.read_state::<SmallState>().unwrap(), &s1);
+        assert_eq!(journal.read_all::<SmallState>().len(), 1);
     }
 }
