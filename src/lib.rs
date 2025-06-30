@@ -30,6 +30,8 @@ pub enum MesoError {
     ExpectedUpdate,
     #[error("Nothing to read, no pending updates")]
     NoPendingUpdates,
+    #[error("No point-to-point communication was done")]
+    NoDirectCommsToShare,
     #[error("Buffer full, cannot write until read")]
     BuffersFull,
     #[error("BroadcastWheel size N must be greater than 0")]
