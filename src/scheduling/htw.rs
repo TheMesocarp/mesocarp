@@ -5,7 +5,7 @@
 //! of time-ordered events, leveraging a bucket sort to minimize the necessary instructions.
 //! This design supports multiple time granularities through a hierarchy of wheels, making it
 //! suitable for high-performance time-based systems.
-use std::{cmp::Reverse, collections::BTreeSet};
+use std::{cmp::Reverse, collections::BinaryHeap};
 
 use crate::MesoError;
 
@@ -73,7 +73,7 @@ impl<T: Scheduleable + Ord, const SLOTS: usize, const HEIGHT: usize> Clock<T, SL
         Ok(events)
     }
     /// roll clock forward one tick, and rotate higher wheels if necessary.
-    pub fn increment(&mut self, overflow: &mut BTreeSet<Reverse<T>>) {
+    pub fn increment(&mut self, overflow: &mut BinaryHeap<Reverse<T>>) {
         self.current_idxs[0] = (self.current_idxs[0] + 1) % SLOTS;
         self.time += 1;
         if self.current_idxs[0] as u64 == 0 {
@@ -81,13 +81,13 @@ impl<T: Scheduleable + Ord, const SLOTS: usize, const HEIGHT: usize> Clock<T, SL
         }
     }
     /// Rotate the timing wheel, moving events from the k-th wheel to fill the (k-1)-th wheel.
-    pub fn rotate(&mut self, overflow: &mut BTreeSet<Reverse<T>>) {
+    pub fn rotate(&mut self, overflow: &mut BinaryHeap<Reverse<T>>) {
         for k in 1..HEIGHT {
             let wheel_period = SLOTS.pow(k as u32);
             if self.time % (wheel_period as u64) == 0 {
                 if HEIGHT == k {
                     for _ in 0..SLOTS.pow(HEIGHT as u32 - 1) {
-                        overflow.pop_first().map(|event| self.insert(event.0));
+                        overflow.pop().map(|event| self.insert(event.0));
                     }
                     return;
                 }
@@ -96,7 +96,7 @@ impl<T: Scheduleable + Ord, const SLOTS: usize, const HEIGHT: usize> Clock<T, SL
                 self.current_idxs[k] = (self.current_idxs[k] + 1) % SLOTS;
                 for event in higher_events {
                     let _ = self.insert(event).map_err(|event| {
-                        overflow.insert(Reverse(event));
+                        overflow.push(Reverse(event));
                     });
                 }
             }
@@ -107,7 +107,7 @@ impl<T: Scheduleable + Ord, const SLOTS: usize, const HEIGHT: usize> Clock<T, SL
     /// which is certainly not the most efficient. however, the alternative via indexing,
     /// similar to the insertion and rotation methods, is much more complicated to do right.
     /// will certainly come back to it).
-    pub fn rollback(&mut self, overflow: &mut BTreeSet<Reverse<T>>, new_time: u64) {
+    pub fn rollback(&mut self, overflow: &mut BinaryHeap<Reverse<T>>, new_time: u64) {
         if new_time >= self.time {
             return;
         }
@@ -123,7 +123,7 @@ impl<T: Scheduleable + Ord, const SLOTS: usize, const HEIGHT: usize> Clock<T, SL
 
         for event in all_events {
             if let Err(e) = self.insert(event) {
-                overflow.insert(Reverse(e));
+                overflow.push(Reverse(e));
             }
         }
     }
