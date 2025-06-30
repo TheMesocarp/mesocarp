@@ -104,7 +104,7 @@ impl<const SLOTS: usize, T: Message> ThreadWorld<SLOTS, T> {
             }
         }
         if to_write.is_empty() {
-            return Err(MesoError::NoPendingUpdates)
+            return Err(MesoError::NoDirectCommsToShare);
         }
         Ok(to_write)
     }
@@ -289,7 +289,7 @@ mod tests {
         };
 
         user0.send(broadcast_msg.clone()).unwrap();
-        world.poll().unwrap();
+        assert_eq!(world.poll().err().unwrap(), MesoError::NoDirectCommsToShare);
 
         // Both users should receive broadcast
         let received1 = user1.poll().unwrap();
