@@ -103,6 +103,9 @@ impl<const SLOTS: usize, T: Message> ThreadWorld<SLOTS, T> {
                 }
             }
         }
+        if to_write.is_empty() {
+            return Err(MesoError::NoPendingUpdates)
+        }
         Ok(to_write)
     }
 
