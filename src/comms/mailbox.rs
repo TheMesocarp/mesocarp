@@ -76,28 +76,30 @@ impl<const SLOTS: usize, T: Message> ThreadWorld<SLOTS, T> {
         let mut to_write = Vec::new();
 
         for outbox in self.dirout.iter() {
-            match outbox.read() {
-                Ok(msg) => {
-                    if let Some(to) = msg.to() {
-                        // Fix: Validate target exists
-                        if to >= self.id_to_idx.len() || self.id_to_idx[to] == usize::MAX {
-                            return Err(MesoError::NotFound {
-                                name: format!("Target agent {to} not found"),
-                            });
+            for _ in 0..SLOTS {
+                match outbox.read() {
+                    Ok(msg) => {
+                        if let Some(to) = msg.to() {
+                            // Fix: Validate target exists
+                            if to >= self.id_to_idx.len() || self.id_to_idx[to] == usize::MAX {
+                                return Err(MesoError::NotFound {
+                                    name: format!("Target agent {to} not found"),
+                                });
+                            }
+                            let target_idx = self.id_to_idx[to];
+                            to_write.push((target_idx, msg));
+                        } else if msg.broadcast() {
+                            self.broadcaster.broadcast(msg);
+                        } else {
+                            return Err(MesoError::ImproperMessagePassing);
                         }
-                        let target_idx = self.id_to_idx[to];
-                        to_write.push((target_idx, msg));
-                    } else if msg.broadcast() {
-                        self.broadcaster.broadcast(msg);
-                    } else {
-                        return Err(MesoError::ImproperMessagePassing);
                     }
-                }
-                Err(MesoError::NoPendingUpdates) => {
-                    continue;
-                }
-                Err(err) => {
-                    return Err(err);
+                    Err(MesoError::NoPendingUpdates) => {
+                        break;
+                    }
+                    Err(err) => {
+                        return Err(err);
+                    }
                 }
             }
         }
