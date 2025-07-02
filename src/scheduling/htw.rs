@@ -12,13 +12,13 @@ use crate::MesoError;
 use super::Scheduleable;
 #[derive(Debug)]
 /// Hierarchical Timing Wheel (HTW) for scheduling events and messages.
-pub struct Clock<T: Scheduleable + Ord, const SLOTS: usize, const HEIGHT: usize> {
+pub struct Clock<T: Scheduleable, const SLOTS: usize, const HEIGHT: usize> {
     pub wheels: [[Vec<T>; SLOTS]; HEIGHT], //timing wheels, with sizes {SLOTS, SLOTS^2, ..., SLOTS^HEIGHT}
     pub current_idxs: [usize; HEIGHT],     // wheel parsing offset index
     pub time: u64,
 }
 
-impl<T: Scheduleable + Ord, const SLOTS: usize, const HEIGHT: usize> Clock<T, SLOTS, HEIGHT> {
+impl<T: Scheduleable, const SLOTS: usize, const HEIGHT: usize> Clock<T, SLOTS, HEIGHT> {
     /// New HTW from time-step size and terminal time.
     pub fn new() -> Result<Self, MesoError> {
         if HEIGHT < 1 {
@@ -131,3 +131,12 @@ impl<T: Scheduleable + Ord, const SLOTS: usize, const HEIGHT: usize> Clock<T, SL
 
 /// A simple one-level timing wheel
 pub type TimingWheel<T, const SLOTS: usize> = Clock<T, SLOTS, 1>;
+
+unsafe impl<T: Scheduleable, const SLOTS: usize, const HEIGHT: usize> Send
+    for Clock<T, SLOTS, HEIGHT>
+{
+}
+unsafe impl<T: Scheduleable, const SLOTS: usize, const HEIGHT: usize> Sync
+    for Clock<T, SLOTS, HEIGHT>
+{
+}

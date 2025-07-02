@@ -98,6 +98,9 @@ impl<const N: usize, T> BufferWheel<N, T> {
     }
 }
 
+unsafe impl<const N: usize, T: Clone> Send for BufferWheel<N, T> {}
+unsafe impl<const N: usize, T: Clone> Sync for BufferWheel<N, T> {}
+
 #[cfg(test)]
 mod tests {
     use super::*;

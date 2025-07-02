@@ -4,7 +4,7 @@
 pub mod htw;
 
 /// Trait for any time-series object for processing.
-pub trait Scheduleable {
+pub trait Scheduleable: Ord {
     fn time(&self) -> u64;
     fn commit_time(&self) -> u64;
 }
