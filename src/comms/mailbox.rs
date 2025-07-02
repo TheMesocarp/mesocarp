@@ -12,10 +12,10 @@ use crate::{
 pub trait Message: Scheduleable + Ord + Clone {
     fn to(&self) -> Option<usize>;
     fn from(&self) -> usize;
-    fn broadcast(&self) -> bool;
 }
 
-pub struct ThreadWorld<const SLOTS: usize, T: Message> {
+/// Manages message passing between multiple threads
+pub struct ThreadedMessenger<const SLOTS: usize, T: Message> {
     agents: Vec<usize>,
     id_to_idx: Vec<usize>,
     dirin: Vec<Arc<BufferWheel<SLOTS, T>>>,
@@ -23,7 +23,8 @@ pub struct ThreadWorld<const SLOTS: usize, T: Message> {
     broadcaster: Arc<Broadcast<SLOTS, T>>,
 }
 
-impl<const SLOTS: usize, T: Message> ThreadWorld<SLOTS, T> {
+impl<const SLOTS: usize, T: Message> ThreadedMessenger<SLOTS, T> {
+    /// Creates a new messenger for the given agent IDs
     pub fn new(agent_ids: Vec<usize>) -> Result<Self, MesoError> {
         let max_id = agent_ids.iter().max().copied().unwrap_or(0);
 
@@ -52,7 +53,8 @@ impl<const SLOTS: usize, T: Message> ThreadWorld<SLOTS, T> {
         })
     }
 
-    pub fn get_user(&self, thread_id: usize) -> Result<ThreadWorldUser<SLOTS, T>, MesoError> {
+    /// Gets a user interface for the specified thread
+    pub fn get_user(&self, thread_id: usize) -> Result<ThreadedMessengerUser<SLOTS, T>, MesoError> {
         if thread_id >= self.id_to_idx.len() || self.id_to_idx[thread_id] == usize::MAX {
             return Err(MesoError::NotFound {
                 name: format!("Agent ID {thread_id} not found within this thread world"),
@@ -62,7 +64,7 @@ impl<const SLOTS: usize, T: Message> ThreadWorld<SLOTS, T> {
         let subscriber = self.broadcaster.register_subscriber();
         let i = self.id_to_idx[thread_id];
 
-        Ok(ThreadWorldUser {
+        Ok(ThreadedMessengerUser {
             thread_id,
             comms: [
                 Arc::clone(&self.dirin[i]),  // incoming
@@ -72,6 +74,7 @@ impl<const SLOTS: usize, T: Message> ThreadWorld<SLOTS, T> {
         })
     }
 
+    /// Polls all outboxes and returns messages ready for delivery
     pub fn poll(&mut self) -> Result<Vec<(usize, T)>, MesoError> {
         let mut to_write = Vec::new();
 
@@ -88,11 +91,9 @@ impl<const SLOTS: usize, T: Message> ThreadWorld<SLOTS, T> {
                             }
                             let target_idx = self.id_to_idx[to];
                             to_write.push((target_idx, msg));
-                        } else if msg.broadcast() {
-                            self.broadcaster.broadcast(msg);
-                        } else {
-                            return Err(MesoError::ImproperMessagePassing);
+                            continue;
                         }
+                        self.broadcaster.broadcast(msg);
                     }
                     Err(MesoError::NoPendingUpdates) => {
                         break;
@@ -109,6 +110,7 @@ impl<const SLOTS: usize, T: Message> ThreadWorld<SLOTS, T> {
         Ok(to_write)
     }
 
+    /// Delivers messages to their target inboxes
     pub fn deliver(&mut self, msgs: Vec<(usize, T)>) -> Result<(), MesoError> {
         for (target_idx, msg) in msgs {
             self.dirin[target_idx].write(msg)?;
@@ -116,18 +118,20 @@ impl<const SLOTS: usize, T: Message> ThreadWorld<SLOTS, T> {
         Ok(())
     }
 
+    /// Returns the list of agent IDs
     pub fn agents(&self) -> &[usize] {
         &self.agents
     }
 }
 
-pub struct ThreadWorldUser<const SLOTS: usize, T: Message> {
+/// Thread user interface for sending and receiving messages from a specific thread
+pub struct ThreadedMessengerUser<const SLOTS: usize, T: Message> {
     thread_id: usize,
     comms: [Arc<BufferWheel<SLOTS, T>>; 2], // [inbox, outbox]
     subscriber: Subscriber<SLOTS, T>,
 }
 
-impl<const SLOTS: usize, T: Message> ThreadWorldUser<SLOTS, T> {
+impl<const SLOTS: usize, T: Message> ThreadedMessengerUser<SLOTS, T> {
     /// Send a message through the world's routing system
     pub fn send(&self, message: T) -> Result<(), MesoError> {
         // Write to our outbox - world will route it during poll()
@@ -179,10 +183,17 @@ impl<const SLOTS: usize, T: Message> ThreadWorldUser<SLOTS, T> {
         output
     }
 
+    /// Returns this thread's ID
     pub fn thread_id(&self) -> usize {
         self.thread_id
     }
 }
+
+unsafe impl<const SLOTS: usize, T: Message> Send for ThreadedMessenger<SLOTS, T> {}
+unsafe impl<const SLOTS: usize, T: Message> Sync for ThreadedMessenger<SLOTS, T> {}
+
+unsafe impl<const SLOTS: usize, T: Message> Send for ThreadedMessengerUser<SLOTS, T> {}
+unsafe impl<const SLOTS: usize, T: Message> Sync for ThreadedMessengerUser<SLOTS, T> {}
 
 #[cfg(test)]
 mod tests {
@@ -215,15 +226,11 @@ mod tests {
         fn from(&self) -> usize {
             self.from_id
         }
-
-        fn broadcast(&self) -> bool {
-            self.is_broadcast
-        }
     }
 
     #[test]
     fn test_world_creation_and_mapping() {
-        let world = ThreadWorld::<16, TestMessage>::new(vec![0, 2, 5]).unwrap();
+        let world = ThreadedMessenger::<16, TestMessage>::new(vec![0, 2, 5]).unwrap();
 
         // Check agent list
         assert_eq!(world.agents(), &[0, 2, 5]);
@@ -244,7 +251,7 @@ mod tests {
 
     #[test]
     fn test_message_routing() {
-        let mut world = ThreadWorld::<16, TestMessage>::new(vec![0, 1]).unwrap();
+        let mut world = ThreadedMessenger::<16, TestMessage>::new(vec![0, 1]).unwrap();
         let user0 = world.get_user(0).unwrap();
         let mut user1 = world.get_user(1).unwrap();
 
@@ -273,7 +280,7 @@ mod tests {
 
     #[test]
     fn test_broadcast_routing() {
-        let mut world = ThreadWorld::<16, TestMessage>::new(vec![0, 1, 2]).unwrap();
+        let mut world = ThreadedMessenger::<16, TestMessage>::new(vec![0, 1, 2]).unwrap();
         let user0 = world.get_user(0).unwrap();
         let mut user1 = world.get_user(1).unwrap();
         let mut user2 = world.get_user(2).unwrap();

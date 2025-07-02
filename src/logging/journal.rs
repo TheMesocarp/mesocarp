@@ -601,6 +601,9 @@ impl Drop for Journal {
     }
 }
 
+unsafe impl Send for Journal {}
+unsafe impl Sync for Journal {}
+
 #[cfg(test)]
 mod tests {
     use super::*;

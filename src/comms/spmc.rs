@@ -81,6 +81,9 @@ impl<const SLOTS: usize, T> WorkQueue<SLOTS, T> {
     }
 }
 
+unsafe impl<const SLOTS: usize, T: Clone> Send for WorkQueue<SLOTS, T> {}
+unsafe impl<const SLOTS: usize, T: Clone> Sync for WorkQueue<SLOTS, T> {}
+
 impl<const SLOTS: usize, T> Worker<SLOTS, T> {
     /// Tries to take the next job from the head slot. Returns `None` if queue is empty or item is lost.
     pub fn try_take(&self) -> Option<T> {
@@ -127,6 +130,9 @@ impl<const SLOTS: usize, T> Worker<SLOTS, T> {
     }
 }
 
+unsafe impl<const SLOTS: usize, T: Clone> Send for Worker<SLOTS, T> {}
+unsafe impl<const SLOTS: usize, T: Clone> Sync for Worker<SLOTS, T> {}
+
 /// `Broadcast` is the producer for an atomic spmc pub-sub channel.
 pub struct Broadcast<const SLOTS: usize, T: Clone> {
     buffers: [AtomicPtr<T>; SLOTS],
@@ -170,6 +176,9 @@ impl<const SLOTS: usize, T: Clone> Broadcast<SLOTS, T> {
     }
 }
 
+unsafe impl<const SLOTS: usize, T: Clone> Send for Broadcast<SLOTS, T> {}
+unsafe impl<const SLOTS: usize, T: Clone> Sync for Broadcast<SLOTS, T> {}
+
 /// A `Subscriber` can poll for new broadcasts with `try_recv` and clone a copy to take ownership over
 pub struct Subscriber<const SLOTS: usize, T: Clone> {
     wheel: Arc<Broadcast<SLOTS, T>>,
@@ -208,6 +217,9 @@ impl<const SLOTS: usize, T: Clone> Subscriber<SLOTS, T> {
         Some(info)
     }
 }
+
+unsafe impl<const SLOTS: usize, T: Clone> Send for Subscriber<SLOTS, T> {}
+unsafe impl<const SLOTS: usize, T: Clone> Sync for Subscriber<SLOTS, T> {}
 
 #[cfg(test)]
 mod broadcast_tests {
