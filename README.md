@@ -1,6 +1,6 @@
 # mesocarp
 [![Crates.io - mesocarp](https://img.shields.io/crates/v/mesocarp?label=mesocarp)](https://crates.io/crates/mesocarp)
-[![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
+[![License: LGPL v2.1](https://img.shields.io/badge/License-LGPL_v2.1-blue.svg)](https://www.gnu.org/licenses/lgpl-2.1)
 
 High-performance primitives for concurrency, synchronization, scheduling, and logging. The cookbook of everything you need to make actor systems scale efficiently.
 
@@ -10,4 +10,4 @@ Contributors are welcome and greatly appreciated! Please feel free to submit a P
 
 ## License
 
-This project is licensed under the AGPL-3.0 copyleft license - see the [LICENSE](LICENSE) file for details.
+This project is licensed under the LGPL-2.1 copyleft license - see the [LICENSE](LICENSE) file for details.
