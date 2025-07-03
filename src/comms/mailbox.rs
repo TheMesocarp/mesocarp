@@ -162,7 +162,7 @@ impl<const SLOTS: usize, T: Message> ThreadedMessengerUser<SLOTS, T> {
         }
 
         if output.is_empty() {
-            return None
+            return None;
         }
         Some(output)
     }
