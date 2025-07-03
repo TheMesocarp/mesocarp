@@ -1,15 +1,14 @@
-use std::{collections::BTreeSet, sync::Arc};
+use std::sync::Arc;
 
 use crate::{
     comms::{
         spmc::{Broadcast, Subscriber},
         spsc::BufferWheel,
     },
-    scheduling::Scheduleable,
     MesoError,
 };
 
-pub trait Message: Scheduleable + Ord + Clone {
+pub trait Message: Clone {
     fn to(&self) -> Option<usize>;
     fn from(&self) -> usize;
 }
@@ -139,8 +138,8 @@ impl<const SLOTS: usize, T: Message> ThreadedMessengerUser<SLOTS, T> {
     }
 
     /// Poll for incoming messages (direct + broadcast)
-    pub fn poll(&mut self) -> Option<BTreeSet<T>> {
-        let mut output: Option<BTreeSet<T>> = None;
+    pub fn poll(&mut self) -> Option<Vec<T>> {
+        let mut output = Vec::new();
         let mut counter = 0;
 
         while counter < SLOTS {
@@ -148,16 +147,7 @@ impl<const SLOTS: usize, T: Message> ThreadedMessengerUser<SLOTS, T> {
             let mut clean = false;
 
             match self.comms[0].read() {
-                Ok(msg) => match &mut output {
-                    Some(set) => {
-                        set.insert(msg);
-                    }
-                    None => {
-                        let mut set = BTreeSet::new();
-                        set.insert(msg);
-                        output = Some(set);
-                    }
-                },
+                Ok(msg) => output.push(msg),
                 Err(_) => {
                     clean = true;
                 }
@@ -165,22 +155,16 @@ impl<const SLOTS: usize, T: Message> ThreadedMessengerUser<SLOTS, T> {
 
             // Check broadcast messages
             if let Some(msg) = self.subscriber.try_recv() {
-                match &mut output {
-                    Some(set) => {
-                        set.insert(msg);
-                    }
-                    None => {
-                        let mut set = BTreeSet::new();
-                        set.insert(msg);
-                        output = Some(set);
-                    }
-                }
+                output.push(msg);
             } else if clean {
                 break;
             }
         }
 
-        output
+        if output.is_empty() {
+            return None
+        }
+        Some(output)
     }
 
     /// Returns this thread's ID
@@ -207,15 +191,6 @@ mod tests {
         to_id: Option<usize>,
         is_broadcast: bool,
         data: String,
-    }
-
-    impl Scheduleable for TestMessage {
-        fn time(&self) -> u64 {
-            self.timestamp
-        }
-        fn commit_time(&self) -> u64 {
-            self.commit_time
-        }
     }
 
     impl Message for TestMessage {
