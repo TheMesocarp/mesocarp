@@ -77,6 +77,8 @@ pub enum MesoError {
         #[from]
         source: NulError,
     },
-    #[error("Improper handling of Message passing. Either fix a `to: usize` address or specify broadcast")]
+    #[error("Improper handling of `Message` passing. Either fix a `to: usize` address or set None to broadcast.")]
     ImproperMessagePassing,
+    #[error("Attempted to send a `Message` to a nonexistent user.")]
+    InvalidUserId,
 }
