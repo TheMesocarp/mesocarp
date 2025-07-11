@@ -1,3 +1,5 @@
+//! This module contains a thread-safe atomic message bus.
+
 use std::sync::Arc;
 
 use crate::{
@@ -8,6 +10,7 @@ use crate::{
     MesoError,
 };
 
+// Basic trait for a direct message between two entities
 pub trait Message: Clone {
     fn to(&self) -> Option<usize>;
     fn from(&self) -> usize;
@@ -70,6 +73,7 @@ impl<const SLOTS: usize, T: Message> ThreadedMessenger<SLOTS, T> {
                 Arc::clone(&self.dirout[i]), // outgoing
             ],
             subscriber,
+            user_count: self.agents.len(),
         })
     }
 
@@ -128,12 +132,18 @@ pub struct ThreadedMessengerUser<const SLOTS: usize, T: Message> {
     thread_id: usize,
     comms: [Arc<BufferWheel<SLOTS, T>>; 2], // [inbox, outbox]
     subscriber: Subscriber<SLOTS, T>,
+    user_count: usize,
 }
 
 impl<const SLOTS: usize, T: Message> ThreadedMessengerUser<SLOTS, T> {
     /// Send a message through the world's routing system
     pub fn send(&self, message: T) -> Result<(), MesoError> {
         // Write to our outbox - world will route it during poll()
+        if let Some(id) = message.to() {
+            if id >= self.user_count {
+                return Err(MesoError::InvalidUserId);
+            }
+        }
         self.comms[1].write(message)
     }
 
