@@ -1,5 +1,4 @@
 //! This module contains a thread-safe atomic message bus.
-
 use std::sync::Arc;
 
 use crate::{
