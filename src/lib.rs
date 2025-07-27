@@ -2,9 +2,12 @@ use std::{ffi::NulError, fmt::Display};
 
 use thiserror::Error;
 
+use crate::sync::ComputeLayout;
+
 pub mod comms;
 pub mod logging;
 pub mod scheduling;
+pub mod sync;
 
 /// Wrapper type for `std::io::Error`
 #[derive(Debug, Error)]
@@ -81,4 +84,12 @@ pub enum MesoError {
     ImproperMessagePassing,
     #[error("Attempted to send a `Message` to a nonexistent user.")]
     InvalidUserId,
+    #[error("Attempted to register a compute producer that expected one layout, but another was found: {0}")]
+    ComputeLayoutExpectationMismatch(ComputeLayout),
+    #[error("current processor is receiving messages from {0} blocks; too far in the past! Increase time bandwidth.")]
+    DistantBlocks(usize),
+    #[error(
+        "Slotted block submissions show different `start`/`dur` values for the same `block_nmb`"
+    )]
+    MismatchBlockRanges,
 }
