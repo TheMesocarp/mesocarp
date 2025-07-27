@@ -325,6 +325,18 @@ impl<const BANDWIDTH: usize> Consensus<BANDWIDTH> {
         Ok(None)
     }
 
+    pub fn check_status(&self) -> bool {
+        if !self.next.iter().all(|x| x.is_none()) {
+            return false;
+        }
+        for row in self.queue.iter() {
+            if !row.iter().all(|x| x.is_none()) {
+                return false;
+            }
+        }
+        true
+    }
+
     fn commit_block(
         &mut self,
         start: u64,
