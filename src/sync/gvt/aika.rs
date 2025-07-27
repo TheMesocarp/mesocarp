@@ -213,9 +213,9 @@ pub struct Consensus<const BANDWIDTH: usize> {
     processor: BlockProcessor<BANDWIDTH>,
     queue: Vec<[Option<Block<BANDWIDTH>>; BANDWIDTH]>,
     next: Vec<Option<Block<BANDWIDTH>>>,
-    blocks: Journal,
-    safe_point: u64,
-    block_nmb: usize,
+    pub blocks: Journal,
+    pub safe_point: u64,
+    pub block_nmb: usize,
 }
 
 impl<const BANDWIDTH: usize> Consensus<BANDWIDTH> {
@@ -229,6 +229,13 @@ impl<const BANDWIDTH: usize> Consensus<BANDWIDTH> {
             safe_point: 0,
             block_nmb: 0,
         })
+    }
+
+    pub fn register_producer(
+        &mut self,
+        sub: Option<Subscriber<BANDWIDTH, Block<BANDWIDTH>>>,
+    ) -> Result<Option<BlockSpoke<BANDWIDTH>>, MesoError> {
+        self.processor.register_producer(sub)
     }
 
     pub fn poll_n_slot(&mut self) -> Result<(), MesoError> {
