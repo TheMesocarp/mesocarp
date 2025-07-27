@@ -88,7 +88,18 @@ unsafe impl<const BANDWIDTH: usize> Zeroable for Block<BANDWIDTH> {}
 
 impl<const BANDWIDTH: usize> Default for Block<BANDWIDTH> {
     fn default() -> Self {
-        Self { start: 0, dur: u64::MAX, max_dur: u64::MAX, sends: 0, recvs_current_block: 0, delayed_recvs: [0; BANDWIDTH], local_corrections: 0, delayed_corrections: [0; BANDWIDTH], block_nmb: 0, producer_id: usize::MAX }
+        Self {
+            start: 0,
+            dur: u64::MAX,
+            max_dur: u64::MAX,
+            sends: 0,
+            recvs_current_block: 0,
+            delayed_recvs: [0; BANDWIDTH],
+            local_corrections: 0,
+            delayed_corrections: [0; BANDWIDTH],
+            block_nmb: 0,
+            producer_id: usize::MAX,
+        }
     }
 }
 
