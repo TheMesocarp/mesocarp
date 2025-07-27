@@ -210,7 +210,7 @@ impl<const BANDWIDTH: usize> BlockProcessor<BANDWIDTH> {
 }
 
 pub struct Consensus<const BANDWIDTH: usize> {
-    processor: BlockProcessor<BANDWIDTH>,
+    pub processor: BlockProcessor<BANDWIDTH>,
     queue: Vec<[Option<Block<BANDWIDTH>>; BANDWIDTH]>,
     next: Vec<Option<Block<BANDWIDTH>>>,
     pub blocks: Journal,
