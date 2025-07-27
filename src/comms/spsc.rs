@@ -222,8 +222,7 @@ mod tests {
                         Ok(v) => {
                             assert_eq!(
                                 v, expected,
-                                "Data integrity check failed at message {}",
-                                expected
+                                "Data integrity check failed at message {expected}"
                             );
                             break;
                         }
