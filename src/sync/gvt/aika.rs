@@ -56,9 +56,9 @@ impl<const BANDWIDTH: usize> Block<BANDWIDTH> {
             }
             println!("added recv to slot {:?} in delayed queue", blocks);
             if !rollback_correction {
-                self.delayed_recvs[blocks] += 1;
+                self.delayed_recvs[blocks - 1] += 1;
             } else {
-                self.delayed_corrections[blocks] += 1;
+                self.delayed_corrections[blocks - 1] += 1;
             }
         } else {
             self.recvs_current_block += 1;
