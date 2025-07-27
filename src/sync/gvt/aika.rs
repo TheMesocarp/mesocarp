@@ -55,9 +55,9 @@ impl<const BANDWIDTH: usize> Block<BANDWIDTH> {
                 return Err(MesoError::DistantBlocks(blocks));
             }
             if !rollback_correction {
-                self.delayed_recvs[blocks - 1] += 1;
+                self.delayed_recvs[blocks] += 1;
             } else {
-                self.delayed_corrections[blocks - 1] += 1;
+                self.delayed_corrections[blocks] += 1;
             }
         } else {
             self.recvs_current_block += 1;
@@ -322,10 +322,6 @@ impl<const BANDWIDTH: usize> Consensus<BANDWIDTH> {
                 start = block.start;
                 dur = block.dur;
             }
-            println!(
-                "dur: {dur} {:?}, start: {start} {:?}",
-                block.dur, block.start
-            );
             if dur != block.dur || start != block.start {
                 return Err(MesoError::MismatchBlockRanges);
             }
