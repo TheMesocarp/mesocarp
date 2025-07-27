@@ -220,7 +220,11 @@ mod tests {
                 loop {
                     match cons.read() {
                         Ok(v) => {
-                            assert_eq!(v, expected, "Data integrity check failed at message {}", expected);
+                            assert_eq!(
+                                v, expected,
+                                "Data integrity check failed at message {}",
+                                expected
+                            );
                             break;
                         }
                         Err(MesoError::NoPendingUpdates) => thread::yield_now(), // Yield if empty
@@ -245,14 +249,13 @@ mod tests {
 
         let writer = thread::spawn(move || {
             for i in 0..ITERATIONS {
-                // Try to write, if full, yield and retry
                 loop {
                     if prod.write(i).is_ok() {
                         break;
                     }
                     thread::yield_now();
                 }
-                // Introduce some variability
+                // lil randomness
                 if i % 50 == 0 {
                     thread::sleep(Duration::from_nanos(1));
                 }
@@ -261,18 +264,20 @@ mod tests {
 
         let reader = thread::spawn(move || {
             for expected in 0..ITERATIONS {
-                // Try to read, if empty, yield and retry
                 loop {
                     match cons.read() {
                         Ok(v) => {
-                            assert_eq!(v, expected, "Alternating check: expected {}, got {}", expected, v);
+                            assert_eq!(
+                                v, expected,
+                                "Alternating check: expected {expected}, got {v}"
+                            );
                             break;
                         }
                         Err(MesoError::NoPendingUpdates) => thread::yield_now(),
                         Err(e) => panic!("unexpected read error: {e:?}"),
                     }
                 }
-                // Introduce some variability
+                // lil randomness
                 if expected % 75 == 0 {
                     thread::sleep(Duration::from_nanos(1));
                 }
@@ -297,7 +302,7 @@ mod tests {
                 loop {
                     match prod.write(i) {
                         Ok(_) => break,
-                        Err(MesoError::BuffersFull) => thread::yield_now(), // Producer will hit full more often
+                        Err(MesoError::BuffersFull) => thread::yield_now(),
                         Err(e) => panic!("unexpected write error: {e:?}"),
                     }
                 }
@@ -311,7 +316,10 @@ mod tests {
                 loop {
                     match cons.read() {
                         Ok(v) => {
-                            assert_eq!(v, expected, "Producer faster: expected {}, got {}", expected, v);
+                            assert_eq!(
+                                v, expected,
+                                "Producer faster: expected {expected}, got {v}"
+                            );
                             break;
                         }
                         Err(MesoError::NoPendingUpdates) => thread::yield_now(),
@@ -353,10 +361,13 @@ mod tests {
                 loop {
                     match cons.read() {
                         Ok(v) => {
-                            assert_eq!(v, expected, "Consumer faster: expected {}, got {}", expected, v);
+                            assert_eq!(
+                                v, expected,
+                                "Consumer faster: expected {expected}, got {v}"
+                            );
                             break;
                         }
-                        Err(MesoError::NoPendingUpdates) => thread::yield_now(), // Consumer will hit empty more often
+                        Err(MesoError::NoPendingUpdates) => thread::yield_now(),
                         Err(e) => panic!("unexpected read error: {e:?}"),
                     }
                 }

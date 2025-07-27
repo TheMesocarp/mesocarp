@@ -409,7 +409,10 @@ pub struct BlockSpoke<const BANDWIDTH: usize> {
 #[cfg(test)]
 mod unit_tests {
     use std::{
-        panic, sync::atomic::{AtomicBool, Ordering}, thread, time::Duration
+        panic,
+        sync::atomic::{AtomicBool, Ordering},
+        thread,
+        time::Duration,
     };
 
     use super::*;
@@ -869,13 +872,11 @@ mod unit_tests {
             assert_eq!(
                 gvt_update,
                 Some(expected_gvt),
-                "GVT did not advance correctly on round {}",
-                round
+                "GVT did not advance correctly on round {round}"
             );
             assert_eq!(
                 consensus.safe_point, expected_gvt,
-                "Safe point is incorrect on round {}",
-                round
+                "Safe point is incorrect on round {round}"
             );
         }
 
