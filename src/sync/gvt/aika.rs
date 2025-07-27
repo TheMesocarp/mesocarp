@@ -409,9 +409,7 @@ pub struct BlockSpoke<const BANDWIDTH: usize> {
 #[cfg(test)]
 mod unit_tests {
     use std::{
-        sync::atomic::{AtomicBool, Ordering},
-        thread,
-        time::Duration,
+        panic, sync::atomic::{AtomicBool, Ordering}, thread, time::Duration
     };
 
     use super::*;
@@ -776,5 +774,112 @@ mod unit_tests {
             final_consensus.check_status(),
             "Consensus queues not empty at end of test"
         );
+    }
+
+    #[test]
+    fn test_producer_exceeds_bandwidth_is_rejected() {
+        let (mut consensus, mut spokes) = setup_consensus(1);
+        let spoke = &mut spokes[0];
+
+        let distant_block = Block::new(0, BLOCK_DURATION, BANDWIDTH + 1, 0);
+        submit_block(spoke, distant_block);
+
+        // poll_n_slot should reject this block
+        let result = consensus.poll_n_slot();
+        assert!(matches!(result, Err(MesoError::DistantBlocks(_))));
+    }
+
+    #[test]
+    fn test_stalled_producer_halts_gvt() {
+        let (mut consensus, mut spokes) = setup_consensus(2);
+
+        // Block 0: Both producers submit, GVT advances
+        let block0_p0 = Block::new(0, BLOCK_DURATION, 0, 0);
+        submit_block(&mut spokes[0], block0_p0);
+        let block0_p1 = Block::new(0, BLOCK_DURATION, 0, 1);
+        submit_block(&mut spokes[1], block0_p1);
+
+        consensus.poll_n_slot().unwrap();
+        // With sends=0, recvs=0, GVT should advance immediately.
+        let gvt_update = consensus.check_update_safe_point().unwrap();
+        assert_eq!(gvt_update, Some(BLOCK_DURATION));
+        assert_eq!(consensus.safe_point, BLOCK_DURATION);
+
+        // Block 1: Only producer 0 submits
+        let block1_p0 = Block::new(BLOCK_DURATION, BLOCK_DURATION, 1, 0);
+        submit_block(&mut spokes[0], block1_p0);
+        // Producer 1 does not submit its block for this round.
+
+        // Poll and try to advance GVT multiple times
+        for _ in 0..5 {
+            consensus.poll_n_slot().unwrap();
+            let gvt_update = consensus.check_update_safe_point().unwrap();
+            // GVT should not advance because producer 1 has not submitted its block
+            assert!(gvt_update.is_none());
+            assert_eq!(
+                consensus.safe_point, BLOCK_DURATION,
+                "GVT advanced despite a stalled producer"
+            );
+        }
+    }
+
+    #[test]
+    fn test_negative_message_count_correction_panic() {
+        let (consensus, mut spokes) = setup_consensus(1);
+
+        let result = panic::catch_unwind(move || {
+            let mut consensus = consensus; // Move consensus into the closure
+            let spoke = &mut spokes[0];
+
+            // Create a block with a small number of sends.
+            let mut block0 = Block::new(0, BLOCK_DURATION, 0, 0);
+            block0.sends = 2;
+            // But a large negative correction, so the net sends would be negative.
+            block0.local_corrections = -5;
+            submit_block(spoke, block0);
+            consensus.poll_n_slot().unwrap();
+            // This call should panic
+            let _ = consensus.check_update_safe_point();
+        });
+
+        assert!(
+            result.is_err(),
+            "Consensus should have panicked due to negative message count calculation"
+        );
+    }
+
+    #[test]
+    fn test_gvt_advance_with_empty_blocks() {
+        const ROUNDS: usize = 10;
+        let (mut consensus, mut spokes) = setup_consensus(NUM_PRODUCERS);
+
+        for round in 0..ROUNDS {
+            let current_time = (round as u64) * BLOCK_DURATION;
+            // All producers submit an empty block for the current round
+            for (i, spoke) in spokes.iter_mut().enumerate() {
+                let empty_block = Block::new(current_time, BLOCK_DURATION, round, i);
+                submit_block(spoke, empty_block);
+            }
+
+            // Poll and advance GVT
+            consensus.poll_n_slot().unwrap();
+            let gvt_update = consensus.check_update_safe_point().unwrap();
+
+            let expected_gvt = current_time + BLOCK_DURATION;
+            assert_eq!(
+                gvt_update,
+                Some(expected_gvt),
+                "GVT did not advance correctly on round {}",
+                round
+            );
+            assert_eq!(
+                consensus.safe_point, expected_gvt,
+                "Safe point is incorrect on round {}",
+                round
+            );
+        }
+
+        assert_eq!(consensus.block_nmb, ROUNDS);
+        assert!(consensus.check_status());
     }
 }
