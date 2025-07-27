@@ -251,6 +251,23 @@ impl<const BANDWIDTH: usize> Consensus<BANDWIDTH> {
         Ok(())
     }
 
+    pub fn fetch_latest_uncommited_blocks(
+        &mut self,
+    ) -> Result<Vec<Option<Block<BANDWIDTH>>>, MesoError> {
+        let mut latests = Vec::new();
+        for i in &self.next {
+            latests.push(*i);
+        }
+
+        for (producer, row) in self.queue.iter().enumerate() {
+            if let Some(block) = row.iter().rev().find_map(|&x| x) {
+                let cloned = Some(block);
+                latests[producer] = cloned;
+            }
+        }
+        Ok(latests)
+    }
+
     pub fn check_update_safe_point(&mut self) -> Result<Option<u64>, MesoError> {
         if !self.next.iter().all(|x| x.is_some()) {
             return Ok(None);
