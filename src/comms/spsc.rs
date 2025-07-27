@@ -106,7 +106,7 @@ mod tests {
     use super::*;
     use std::sync::Arc;
     use std::thread;
-    use std::time::Duration;
+    //use std::time::Duration;
 
     #[test]
     fn sequential_write_read() {

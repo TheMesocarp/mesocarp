@@ -2,7 +2,7 @@ use std::{ffi::NulError, fmt::Display};
 
 use thiserror::Error;
 
-use crate::sync::ComputeLayout;
+use crate::sync::gvt::ComputeLayout;
 
 pub mod comms;
 pub mod logging;

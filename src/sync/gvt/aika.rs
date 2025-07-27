@@ -1,3 +1,12 @@
+//! `aika` uses a block-based asynchronous GVT update algorithm, that can be computed
+//! both on a GVT Master thread or locally by producers for a fully thread-decentralized.
+//!
+//! The idea behind it is simple: when the next queued block has had all its pending
+//! messages processed, its not longer possible to rollback into that blocks time range,
+//! so its safe to update the global clock.
+//!
+//! In this way, this is a *conservative* asynchronous GVT, and its accuracy will
+//! depend on the block and messaging dynamics.
 use std::sync::Arc;
 
 use bytemuck::{Pod, Zeroable};
@@ -8,26 +17,40 @@ use crate::{
         spsc::BufferWheel,
     },
     logging::journal::Journal,
-    sync::ComputeLayout,
+    sync::gvt::ComputeLayout,
     MesoError,
 };
 
+/// A `Block` represents a package of data for a given time range containing the counters for
+/// reads and writes for all (anti) messages processed within that block, as well as a block number,
+/// and producer ID.
 #[derive(Clone, Copy, Debug)]
 #[repr(C)]
 pub struct Block<const BANDWIDTH: usize> {
+    /// Start time of the block.
     pub start: u64,
+    /// Duration of the block.
     pub dur: u64,
+    /// Maximum block duration. This will be the typical block duration unless the system halts early.
     pub max_dur: u64,
+    /// Number of messages sent during this block.
     pub sends: usize,
+    /// Number of messages received during this block, that were sent during this block as well.
     pub recvs_current_block: usize,
+    /// Number of messages received during this block, that were sent during prior blocks.
     pub delayed_recvs: [isize; BANDWIDTH],
+    /// If a rollback occured that erased block-local messages, those corrections are logged here.
     pub local_corrections: isize,
+    /// If a rollback erases distant messages, those corrections are logged here.
     pub delayed_corrections: [isize; BANDWIDTH],
+    /// Current block number in time
     pub block_nmb: usize,
+    /// Producer tag
     pub producer_id: usize,
 }
 
 impl<const BANDWIDTH: usize> Block<BANDWIDTH> {
+    /// Create a new `Block<const BADNWIDTH: usize>`.
     pub fn new(start: u64, dur: u64, block_nmb: usize, producer_id: usize) -> Self {
         Self {
             start,
@@ -43,10 +66,12 @@ impl<const BANDWIDTH: usize> Block<BANDWIDTH> {
         }
     }
 
+    /// Increment the send counter.
     pub fn send(&mut self) {
         self.sends += 1
     }
 
+    /// Increment the appropriate receive counter given the time stamp and correction flag.
     pub fn recv(&mut self, commit_time: u64, rollback_correction: bool) -> Result<(), MesoError> {
         if commit_time < self.start {
             let real_diff = self.start - commit_time - 1;
@@ -65,7 +90,12 @@ impl<const BANDWIDTH: usize> Block<BANDWIDTH> {
         Ok(())
     }
 
+    /// Decrement the appropiate correction counter when sending an outgoing anti-message.
     pub fn send_anti(&mut self, commit_time: u64) -> Result<(), MesoError> {
+        if commit_time >= self.start {
+            self.local_corrections -= 1;
+            return Ok(());
+        }
         let real_diff = self.start - commit_time - 1;
         let blocks = (real_diff / self.max_dur) as usize;
         if blocks >= BANDWIDTH {
@@ -75,6 +105,7 @@ impl<const BANDWIDTH: usize> Block<BANDWIDTH> {
         Ok(())
     }
 
+    /// Acknowledge the receive of an anti-message and decrement the appropiate correction counter or recv counter.
     pub fn recv_anti(&mut self, commit_time: u64) -> Result<(), MesoError> {
         if commit_time < self.start {
             let real_diff = self.start - commit_time - 1;
@@ -89,6 +120,7 @@ impl<const BANDWIDTH: usize> Block<BANDWIDTH> {
         Ok(())
     }
 
+    /// Retreive the full block ID
     pub fn block_id(&self) -> (usize, usize) {
         (self.producer_id, self.block_nmb)
     }
@@ -117,6 +149,8 @@ impl<const BANDWIDTH: usize> Default for Block<BANDWIDTH> {
     }
 }
 
+/// Communication layer for this GVT system. Supports both a GVT Master thread or
+/// a fully decentralized set up, just specify the mode with `ComputeLayout`.
 pub struct BlockProcessor<const BANDWIDTH: usize> {
     mode: ComputeLayout,
     block_receiver_centralized: Option<Vec<Arc<BufferWheel<BANDWIDTH, Block<BANDWIDTH>>>>>,
@@ -126,6 +160,7 @@ pub struct BlockProcessor<const BANDWIDTH: usize> {
 }
 
 impl<const BANDWIDTH: usize> BlockProcessor<BANDWIDTH> {
+    /// Spawn a new `BlockProcessor<const BANDWIDTH: usize>`.
     pub fn new(mode: ComputeLayout) -> Result<Self, MesoError> {
         let block_receiver_centralized = match mode {
             ComputeLayout::HubSpoke => Some(Vec::new()),
@@ -148,6 +183,7 @@ impl<const BANDWIDTH: usize> BlockProcessor<BANDWIDTH> {
         })
     }
 
+    /// Register a producer in the GVT Master / Hub n' Spoke layout. Will be rejected if the layout mode is not set correctly.
     pub fn register_centralized_producer(&mut self) -> Result<BlockSpoke<BANDWIDTH>, MesoError> {
         if self.mode != ComputeLayout::HubSpoke {
             return Err(MesoError::ComputeLayoutExpectationMismatch(self.mode));
@@ -171,6 +207,7 @@ impl<const BANDWIDTH: usize> BlockProcessor<BANDWIDTH> {
         })
     }
 
+    /// Register a producer in the decentralized layout. Will be rejected if the layout mode is not set correctly.
     pub fn register_decentralized_producer(
         &mut self,
         sub: Subscriber<BANDWIDTH, Block<BANDWIDTH>>,
@@ -185,6 +222,7 @@ impl<const BANDWIDTH: usize> BlockProcessor<BANDWIDTH> {
         Ok(())
     }
 
+    /// Wrapper for producer registration on any compute layout.
     pub fn register_producer(
         &mut self,
         sub: Option<Subscriber<BANDWIDTH, Block<BANDWIDTH>>>,
@@ -199,6 +237,7 @@ impl<const BANDWIDTH: usize> BlockProcessor<BANDWIDTH> {
         }
     }
 
+    /// Poll for pending blocks awaiting submission.
     pub fn poll(&mut self) -> Result<Vec<Option<Vec<Block<BANDWIDTH>>>>, MesoError> {
         let mut output = Vec::new();
         match self.mode {
@@ -231,6 +270,7 @@ impl<const BANDWIDTH: usize> BlockProcessor<BANDWIDTH> {
         Ok(output)
     }
 
+    /// Broadcast a new safe point in the GVT Master / Hub n' Spoke layout. Will be rejected if the wrong layout mode is set.
     pub fn broadcast_new_safe_point(&mut self, gvt: u64) -> Result<(), MesoError> {
         if self.mode != ComputeLayout::HubSpoke {
             return Err(MesoError::ComputeLayoutExpectationMismatch(self.mode));
@@ -240,16 +280,24 @@ impl<const BANDWIDTH: usize> BlockProcessor<BANDWIDTH> {
     }
 }
 
+/// Main GVT Updater
 pub struct Consensus<const BANDWIDTH: usize> {
+    /// Block, and if need GVT, comms channels
     pub processor: BlockProcessor<BANDWIDTH>,
+    // Distant future block queue for each producer. The Vec index `i` corresponds to producer `i`'s queue
     queue: Vec<[Option<Block<BANDWIDTH>>; BANDWIDTH]>,
     next: Vec<Option<Block<BANDWIDTH>>>,
+    /// History of stored accepted blocks.
     pub blocks: Journal,
+    /// Current GVT safe point.
     pub safe_point: u64,
+    /// Current block number.
     pub block_nmb: usize,
 }
 
 impl<const BANDWIDTH: usize> Consensus<BANDWIDTH> {
+    /// Spawn a new `Consensus` with a given compute layout.
+    /// `batch_size: usize` input defines the size of the arena allocation used in the `Journal`.
     pub fn new(mode: ComputeLayout, batch_size: usize) -> Result<Self, MesoError> {
         let blocksize = BANDWIDTH * 16 + 48;
         Ok(Self {
@@ -262,6 +310,8 @@ impl<const BANDWIDTH: usize> Consensus<BANDWIDTH> {
         })
     }
 
+    /// Wrapper method over `self.processor.register_producer(sub)`.
+    #[inline(always)]
     pub fn register_producer(
         &mut self,
         sub: Option<Subscriber<BANDWIDTH, Block<BANDWIDTH>>>,
@@ -269,6 +319,7 @@ impl<const BANDWIDTH: usize> Consensus<BANDWIDTH> {
         self.processor.register_producer(sub)
     }
 
+    /// Poll for new incoming blocks and slot them in their respective spots.
     pub fn poll_n_slot(&mut self) -> Result<(), MesoError> {
         let new_blocks = self.processor.poll()?;
         for (i, planet) in new_blocks.into_iter().enumerate() {
@@ -289,6 +340,7 @@ impl<const BANDWIDTH: usize> Consensus<BANDWIDTH> {
         Ok(())
     }
 
+    /// Fetch a copy of the most recent uncommited block from each producer.
     pub fn fetch_latest_uncommited_blocks(
         &mut self,
     ) -> Result<Vec<Option<Block<BANDWIDTH>>>, MesoError> {
@@ -306,6 +358,8 @@ impl<const BANDWIDTH: usize> Consensus<BANDWIDTH> {
         Ok(latests)
     }
 
+    /// Check if all of the next row is received and if its safe to commit a new block or not.
+    /// Output the new global time if there is any.
     pub fn check_update_safe_point(&mut self) -> Result<Option<u64>, MesoError> {
         if !self.next.iter().all(|x| x.is_some()) {
             return Ok(None);
@@ -355,6 +409,7 @@ impl<const BANDWIDTH: usize> Consensus<BANDWIDTH> {
         Ok(None)
     }
 
+    /// Check for pending blocks.
     pub fn check_status(&self) -> bool {
         if !self.next.iter().all(|x| x.is_none()) {
             return false;
@@ -400,9 +455,13 @@ impl<const BANDWIDTH: usize> Consensus<BANDWIDTH> {
     }
 }
 
+/// Wrapper struct for the block management utils necessary to manage and communicate block updates in GVT Master layout.
 pub struct BlockSpoke<const BANDWIDTH: usize> {
+    /// Block submitter back to the GVT Master thread.
     pub submitter: Arc<BufferWheel<BANDWIDTH, Block<BANDWIDTH>>>,
+    /// Subscriber for GVT updates sent out by the GVT Master thread.
     pub subscriber: Subscriber<BANDWIDTH, u64>,
+    /// Current block.
     pub block: Block<BANDWIDTH>,
 }
 
@@ -416,7 +475,7 @@ mod unit_tests {
     };
 
     use super::*;
-    use crate::sync::ComputeLayout;
+    use crate::sync::gvt::ComputeLayout;
 
     const BANDWIDTH: usize = 16;
     const NUM_PRODUCERS: usize = 2;
