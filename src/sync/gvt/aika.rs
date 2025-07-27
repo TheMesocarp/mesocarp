@@ -54,7 +54,6 @@ impl<const BANDWIDTH: usize> Block<BANDWIDTH> {
             if blocks >= BANDWIDTH {
                 return Err(MesoError::DistantBlocks(blocks));
             }
-            println!("added recv to slot {:?} in delayed queue", blocks);
             if !rollback_correction {
                 self.delayed_recvs[blocks] += 1;
             } else {
@@ -72,7 +71,6 @@ impl<const BANDWIDTH: usize> Block<BANDWIDTH> {
         if blocks >= BANDWIDTH {
             return Err(MesoError::DistantBlocks(blocks));
         }
-        println!("subbed anti recv to slot {:?} in delayed queue", blocks);
         self.delayed_corrections[blocks] -= 1;
         Ok(())
     }
@@ -84,7 +82,6 @@ impl<const BANDWIDTH: usize> Block<BANDWIDTH> {
             if blocks >= BANDWIDTH {
                 return Err(MesoError::DistantBlocks(blocks));
             }
-            println!("added recv to slot {:?} in delayed queue", blocks);
             self.delayed_recvs[blocks] -= 1;
         } else {
             self.recvs_current_block -= 1;
@@ -511,7 +508,7 @@ mod unit_tests {
 
         consensus.poll_n_slot().unwrap();
         let gvt_update = consensus.check_update_safe_point().unwrap();
-        println!("{:?}", gvt_update);
+        println!("{gvt_update:?}");
         assert!(gvt_update.is_none());
 
         let mut block3 = Block::new(2 * BLOCK_DURATION, BLOCK_DURATION, 2, NUM_PRODUCERS - 1);
