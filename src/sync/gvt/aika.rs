@@ -55,9 +55,9 @@ impl<const BANDWIDTH: usize> Block<BANDWIDTH> {
                 return Err(MesoError::DistantBlocks(blocks));
             }
             if !rollback_correction {
-                self.delayed_recvs[blocks] += 1;
+                self.delayed_recvs[blocks - 1] += 1;
             } else {
-                self.delayed_corrections[blocks] += 1;
+                self.delayed_corrections[blocks - 1] += 1;
             }
         } else {
             self.recvs_current_block += 1;
@@ -71,7 +71,7 @@ impl<const BANDWIDTH: usize> Block<BANDWIDTH> {
         if blocks >= BANDWIDTH {
             return Err(MesoError::DistantBlocks(blocks));
         }
-        self.delayed_corrections[blocks] -= 1;
+        self.delayed_corrections[blocks - 1] -= 1;
         Ok(())
     }
 
