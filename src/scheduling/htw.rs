@@ -122,8 +122,10 @@ impl<T: Scheduleable, const SLOTS: usize, const HEIGHT: usize> Clock<T, SLOTS, H
         self.current_idxs = [0; HEIGHT];
 
         for event in all_events {
-            if let Err(e) = self.insert(event) {
-                overflow.push(Reverse(e));
+            if event.commit_time() < new_time {
+                if let Err(e) = self.insert(event) {
+                    overflow.push(Reverse(e));
+                }
             }
         }
     }
