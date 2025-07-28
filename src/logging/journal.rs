@@ -396,7 +396,7 @@ impl Journal {
 
         // Deallocate all allocations that started after rollback time (this is right, dont fuck with this)
         for alloc in &mut self.allocations {
-            if alloc.active && alloc.start > time {
+            if alloc.active && alloc.start >= time {
                 unsafe {
                     dealloc(alloc.ptr, alloc.layout);
                 }
@@ -408,14 +408,14 @@ impl Journal {
         let split_point = LogState {
             state: null_mut(),
             meta: MetaLog::default(),
-            time: time + 1,
+            time,
         };
         let to_remove = self.tape.split_off(&split_point);
         drop(to_remove);
 
         let mut writes_to_remove = Vec::new();
         for (i, log) in self.current_writes.iter().enumerate().rev() {
-            if log.time > time {
+            if log.time >= time {
                 writes_to_remove.push(i);
                 // Decrement counter for this entry's allocation if it's still active
                 if self.allocations[log.meta.alloc_idx].active {
@@ -432,12 +432,12 @@ impl Journal {
             self.current_writes.remove(i);
         }
 
-        // Find the new current state (last entry with time <= rollback time)
+        // Find the new current state (last entry with time < rollback time)
         let new_state = self
             .current_writes
             .iter()
             .rev()
-            .find(|log| log.time <= time)
+            .find(|log| log.time < time)
             .or_else(|| {
                 self.tape
                     .range(
@@ -486,7 +486,7 @@ impl Journal {
     /// This method removes all log entries with a timestamp greater than `time`.
     /// Instead of dropping the removed entries, it reconstructs and returns them as a `Vec<(T, u64)>`.
     pub fn rollback_return<T: Pod + Zeroable + 'static>(&mut self, time: u64) -> Vec<(T, u64)> {
-        if time >= self.state.time {
+        if time > self.state.time {
             return Vec::new(); // Nothing to rollback
         }
 
@@ -494,7 +494,7 @@ impl Journal {
 
         // Deallocate all allocations that started entirely after the rollback time.
         for alloc in &mut self.allocations {
-            if alloc.active && alloc.start > time {
+            if alloc.active && alloc.start >= time {
                 unsafe {
                     dealloc(alloc.ptr, alloc.layout);
                 }
@@ -506,7 +506,7 @@ impl Journal {
         let split_point = LogState {
             state: null_mut(),
             meta: MetaLog::default(),
-            time: time + 1,
+            time,
         };
         let to_remove_from_tape = self.tape.split_off(&split_point);
         for log_state in to_remove_from_tape {
@@ -520,7 +520,7 @@ impl Journal {
         let mut i = self.current_writes.len();
         while i > 0 {
             i -= 1;
-            if self.current_writes[i].time > time {
+            if self.current_writes[i].time >= time {
                 let log = self.current_writes.remove(i);
                 if self.allocations[log.meta.alloc_idx].active {
                     if let AllocKind::Arena { counter, .. } =
@@ -541,7 +541,7 @@ impl Journal {
             .current_writes
             .iter()
             .rev()
-            .find(|log| log.time <= time)
+            .find(|log| log.time < time)
             .or_else(|| {
                 self.tape
                     .range(
@@ -817,7 +817,7 @@ mod tests {
 
         // Rapidly rollback and branch
         for i in (0..10).rev().step_by(2) {
-            journal.rollback(i as u64 * 100);
+            journal.rollback((i as u64 + 1) * 100);
 
             // Verify correct state restored
             assert_eq!(journal.read_state::<SimulationState>().unwrap(), &states[i]);
@@ -931,7 +931,7 @@ mod tests {
         journal.write(SmallState { x: 4, y: 4.0 }, 2000, None);
 
         // Rollback to timestamp with multiple entries
-        journal.rollback(1000);
+        journal.rollback(1001);
 
         // Should keep all entries at time 1000
         assert_eq!(journal.read_state::<SmallState>().unwrap(), &s3);
@@ -1024,7 +1024,7 @@ mod tests {
         }
 
         // Rollback to frame 50
-        journal.rollback(50 * 16);
+        journal.rollback(50 * 16 + 1);
 
         // Replay should be deterministic
         let checkpoint = *journal.read_state::<SimulationState>().unwrap();
@@ -1052,7 +1052,7 @@ mod tests {
         }
 
         // Server authoritative update arrives for time 500
-        journal.rollback(500);
+        journal.rollback(501);
         let server_state = SmallState { x: 5, y: 5.5 }; // Slightly different!
         journal.write(server_state, 500, None);
 
@@ -1094,7 +1094,7 @@ mod tests {
         let data4 = 0u64;
         journal.write(data4, 250, None);
 
-        assert_eq!(journal.read_all::<u64>().len(), 3);
+        assert_eq!(journal.read_all::<u64>().len(), 2);
     }
 
     #[test]
@@ -1111,17 +1111,17 @@ mod tests {
         let branch_point = 200;
 
         // Timeline A
-        journal.rollback(branch_point);
+        journal.rollback(branch_point + 1);
         journal.write(100u32, 300, None);
         journal.write(101u32, 400, None);
 
         // Timeline B
-        journal.rollback(branch_point);
+        journal.rollback(branch_point + 1);
         journal.write(200u32, 300, None);
         journal.write(201u32, 400, None);
 
         // Timeline C
-        journal.rollback(branch_point);
+        journal.rollback(branch_point + 1);
         journal.write(300u32, 300, None);
         journal.write(301u32, 400, None);
 
@@ -1220,9 +1220,9 @@ mod tests {
         // Rollback exactly to a state time
         journal.rollback(200);
 
-        assert_eq!(journal.read_state::<u32>().unwrap(), &2);
+        assert_eq!(journal.read_state::<u32>().unwrap(), &1);
         let all = journal.read_all::<u32>();
-        assert_eq!(all.len(), 2);
+        assert_eq!(all.len(), 1);
     }
 
     #[test]
@@ -1274,12 +1274,12 @@ mod tests {
         // Rollback to same time multiple times
         for _ in 0..5 {
             journal.rollback(500);
-            assert_eq!(journal.read_state::<u32>().unwrap(), &5);
+            assert_eq!(journal.read_state::<u32>().unwrap(), &4);
         }
 
         // Should still work correctly
         journal.write(999u32, 600, None);
-        assert_eq!(journal.read_all::<u32>().len(), 7);
+        assert_eq!(journal.read_all::<u32>().len(), 6);
     }
 
     #[test]
