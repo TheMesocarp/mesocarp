@@ -316,7 +316,10 @@ impl<const BANDWIDTH: usize> Consensus<BANDWIDTH> {
         &mut self,
         sub: Option<Subscriber<BANDWIDTH, Block<BANDWIDTH>>>,
     ) -> Result<Option<BlockSpoke<BANDWIDTH>>, MesoError> {
-        self.processor.register_producer(sub)
+        let out = self.processor.register_producer(sub)?;
+        self.queue.push([None; BANDWIDTH]);
+        self.next.push(None);
+        Ok(out)
     }
 
     /// Poll for new incoming blocks and slot them in their respective spots.
@@ -403,6 +406,9 @@ impl<const BANDWIDTH: usize> Consensus<BANDWIDTH> {
         let normalized_sends = (sends.checked_add_signed(correction_factor).unwrap()) as isize;
         let normalized_recvs = recvs as isize + lates;
         if normalized_sends - normalized_recvs == 0 {
+            if dur == 0 {
+                return Ok(None);
+            }
             self.commit_block(start, dur, sends, recvs, delayed_recvs, correction_factor);
             return Ok(Some(self.safe_point));
         }
