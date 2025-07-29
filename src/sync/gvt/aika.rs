@@ -361,6 +361,33 @@ impl<const BANDWIDTH: usize> Consensus<BANDWIDTH> {
         Ok(latests)
     }
 
+    /// Have all producers submitted the final valid block?
+    pub fn all_producers_at_terminal(
+        &mut self,
+        terminal: u64
+    ) -> bool {
+        let len = self.next.len();
+
+        let mut latests = vec![None ; len];
+        for i in self.next.iter().flatten() {
+            let out = Some(i.clone());
+            latests.push(out);
+        }
+
+        for (producer, row) in self.queue.iter().enumerate() {
+            if let Some(block) = row.iter().rev().find_map(|&x| x) {
+                let cloned = Some(block);
+                latests[producer] = cloned;
+            }
+        }
+        for block in latests.iter().flatten() {
+            if block.start + block.dur < terminal {
+                return false
+            }
+        }
+        true
+    }
+
     /// Check if all of the next row is received and if its safe to commit a new block or not.
     /// Output the new global time if there is any.
     pub fn check_update_safe_point(&mut self) -> Result<Option<u64>, MesoError> {
@@ -413,6 +440,59 @@ impl<const BANDWIDTH: usize> Consensus<BANDWIDTH> {
             return Ok(Some(self.safe_point));
         }
         Ok(None)
+    }
+
+    pub fn cusp_return_sends(&mut self) -> Result<Option<Result<u64, isize>>, MesoError> {
+        if !self.next.iter().all(|x| x.is_some()) {
+            return Ok(None);
+        }
+        let mut start = 0;
+        let mut dur = 0;
+
+        let mut sends = 0;
+        let mut recvs = 0;
+        let mut delayed_recvs = [0isize; BANDWIDTH];
+        let mut correction_factor = 0isize;
+        for block in &mut self.next.iter_mut().flatten() {
+            if start == dur && dur == 0 {
+                start = block.start;
+                dur = block.dur;
+            }
+            if dur != block.dur || start != block.start {
+                return Err(MesoError::MismatchBlockRanges);
+            }
+            sends += block.sends;
+            recvs += block.recvs_current_block;
+            delayed_recvs
+                .iter_mut()
+                .zip(block.delayed_recvs.iter())
+                .for_each(|(x, y)| *x += *y);
+            correction_factor += block.local_corrections;
+        }
+        let mut lates = 0;
+        for producer_queue in self.queue.iter() {
+            for (slot, maybe) in producer_queue.iter().enumerate() {
+                match maybe {
+                    Some(block) => {
+                        lates += block.delayed_recvs[slot];
+                        correction_factor += block.delayed_corrections[slot];
+                    }
+                    None => break,
+                }
+            }
+        }
+
+        let normalized_sends = (sends.checked_add_signed(correction_factor).unwrap()) as isize;
+        let normalized_recvs = recvs as isize + lates;
+        let diff = normalized_sends - normalized_recvs;
+        if diff == 0 {
+            if dur == 0 {
+                return Ok(None);
+            }
+            self.commit_block(start, dur, sends, recvs, delayed_recvs, correction_factor);
+            return Ok(Some(Ok(self.safe_point)));
+        }
+        Ok(Some(Err(diff)))
     }
 
     /// Check for pending blocks.
