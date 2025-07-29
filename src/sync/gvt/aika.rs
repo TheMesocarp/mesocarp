@@ -362,15 +362,12 @@ impl<const BANDWIDTH: usize> Consensus<BANDWIDTH> {
     }
 
     /// Have all producers submitted the final valid block?
-    pub fn all_producers_at_terminal(
-        &mut self,
-        terminal: u64
-    ) -> bool {
+    pub fn all_producers_at_terminal(&mut self, terminal: u64) -> bool {
         let len = self.next.len();
 
-        let mut latests = vec![None ; len];
+        let mut latests = vec![None; len];
         for i in self.next.iter().flatten() {
-            let out = Some(i.clone());
+            let out = Some(*i);
             latests.push(out);
         }
 
@@ -382,7 +379,7 @@ impl<const BANDWIDTH: usize> Consensus<BANDWIDTH> {
         }
         for block in latests.iter().flatten() {
             if block.start + block.dur < terminal {
-                return false
+                return false;
             }
         }
         true
