@@ -13,6 +13,7 @@ use bytemuck::{Pod, Zeroable};
 
 use crate::MesoError;
 
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
 enum AllocKind {
     Arena { end: u64, counter: usize },
     Solo,
@@ -58,7 +59,7 @@ impl Default for MetaLog {
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
-pub struct LogState {
+struct LogState {
     state: *mut u8,
     meta: MetaLog,
     time: u64,
@@ -86,6 +87,7 @@ impl Default for LogState {
     }
 }
 
+#[derive(Debug)]
 struct Allocation {
     kind: AllocKind,
     ptr: *mut u8,
@@ -112,6 +114,7 @@ impl Allocation {
 ///
 /// This logger uses memory arenas to efficiently store logged data in contiguous memory, reducing allocation overhead and improving cache locality.
 /// Data is stored in a type-erased manner, allowing different types to be logged to the same arena while maintaining type safety through the `Pod + Zeroable` trait bounds.
+#[derive(Debug)]
 pub struct Journal {
     arena: *mut u8,
     active_id: usize,
