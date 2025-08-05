@@ -540,6 +540,7 @@ impl<const BANDWIDTH: usize> Consensus<BANDWIDTH> {
     }
 }
 
+#[derive(Debug)]
 /// Wrapper struct for the block management utils necessary to manage and communicate block updates in GVT Master layout.
 pub struct BlockSpoke<const BANDWIDTH: usize> {
     /// Block submitter back to the GVT Master thread.
