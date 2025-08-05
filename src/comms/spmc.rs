@@ -13,6 +13,7 @@ use std::thread::yield_now;
 
 use crate::MesoError;
 
+#[derive(Debug)]
 /// Single‐producer, multi‐consumer work queue.
 /// Uses sequence numbers to prevent a race condition during buffer wrap-around.
 /// T: Send because ownership moves to exactly one consumer.
@@ -23,6 +24,7 @@ pub struct WorkQueue<const SLOTS: usize, T> {
     tail: AtomicUsize, // Producer write pointer
 }
 
+#[derive(Debug)]
 /// A handle for consumers to pop jobs.
 pub struct Worker<const SLOTS: usize, T> {
     queue: Arc<WorkQueue<SLOTS, T>>,
@@ -133,6 +135,7 @@ impl<const SLOTS: usize, T> Worker<SLOTS, T> {
 unsafe impl<const SLOTS: usize, T: Clone> Send for Worker<SLOTS, T> {}
 unsafe impl<const SLOTS: usize, T: Clone> Sync for Worker<SLOTS, T> {}
 
+#[derive(Debug)]
 /// `Broadcast` is the producer for an atomic spmc pub-sub channel.
 pub struct Broadcast<const SLOTS: usize, T: Clone> {
     buffers: [AtomicPtr<T>; SLOTS],
@@ -179,6 +182,7 @@ impl<const SLOTS: usize, T: Clone> Broadcast<SLOTS, T> {
 unsafe impl<const SLOTS: usize, T: Clone> Send for Broadcast<SLOTS, T> {}
 unsafe impl<const SLOTS: usize, T: Clone> Sync for Broadcast<SLOTS, T> {}
 
+#[derive(Debug)]
 /// A `Subscriber` can poll for new broadcasts with `try_recv` and clone a copy to take ownership over
 pub struct Subscriber<const SLOTS: usize, T: Clone> {
     wheel: Arc<Broadcast<SLOTS, T>>,

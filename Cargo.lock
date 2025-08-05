@@ -16,7 +16,7 @@ checksum = "5c76a5792e44e4abe34d3abf15636779261d45a7450612059293d1d2cfc63422"
 
 [[package]]
 name = "mesocarp"
-version = "0.9.4"
+version = "0.9.5"
 dependencies = [
  "array-init",
  "bytemuck",

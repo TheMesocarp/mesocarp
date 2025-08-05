@@ -149,6 +149,7 @@ impl<const BANDWIDTH: usize> Default for Block<BANDWIDTH> {
     }
 }
 
+#[derive(Debug)]
 /// Communication layer for this GVT system. Supports both a GVT Master thread or
 /// a fully decentralized set up, just specify the mode with `ComputeLayout`.
 pub struct BlockProcessor<const BANDWIDTH: usize> {
@@ -280,6 +281,7 @@ impl<const BANDWIDTH: usize> BlockProcessor<BANDWIDTH> {
     }
 }
 
+#[derive(Debug)]
 /// Main GVT Updater
 pub struct Consensus<const BANDWIDTH: usize> {
     /// Block, and if need GVT, comms channels

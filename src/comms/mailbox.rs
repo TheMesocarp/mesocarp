@@ -15,6 +15,7 @@ pub trait Message: Clone {
     fn from(&self) -> usize;
 }
 
+#[derive(Debug)]
 /// Manages message passing between multiple threads
 pub struct ThreadedMessenger<const SLOTS: usize, T: Message> {
     agents: Vec<usize>,
@@ -126,6 +127,7 @@ impl<const SLOTS: usize, T: Message> ThreadedMessenger<SLOTS, T> {
     }
 }
 
+#[derive(Debug)]
 /// Thread user interface for sending and receiving messages from a specific thread
 pub struct ThreadedMessengerUser<const SLOTS: usize, T: Message> {
     thread_id: usize,
