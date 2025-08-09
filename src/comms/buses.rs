@@ -21,8 +21,8 @@ pub struct ThreadedMessenger<const SLOTS: usize, T: Message> {
     dirin: Vec<Arc<BufferWheel<SLOTS, T>>>,
     dirout: Vec<Arc<BufferWheel<SLOTS, T>>>,
     broadcaster: Arc<Broadcast<SLOTS, T>>,
-    pub(crate) capacity: usize,
-    registered: usize,
+    pub capacity: usize,
+    pub registered: usize,
 }
 
 impl<const SLOTS: usize, T: Message> ThreadedMessenger<SLOTS, T> {
