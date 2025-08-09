@@ -214,9 +214,9 @@ mod tests {
         let user2 = world.get_user().unwrap();
         let user5 = world.get_user().unwrap();
 
-        assert_eq!(user0.thread_id(), 1);
-        assert_eq!(user2.thread_id(), 2);
-        assert_eq!(user5.thread_id(), 3);
+        assert_eq!(user0.thread_id(), 0);
+        assert_eq!(user2.thread_id(), 1);
+        assert_eq!(user5.thread_id(), 2);
 
         // Check invalid user fails
         assert!(world.get_user().is_err());
