@@ -1,7 +1,10 @@
 //! A set of scheduling primitives with low algorithmic complexity, for high-performance time-based systems.
 //!
 //! Currently, this module contains timing wheel designs (both standard and hierarchical).
-pub mod htw;
+mod htw;
+
+pub use htw::Clock;
+pub use htw::TimingWheel;
 
 /// Trait for any time-series object for processing.
 pub trait Scheduleable: Ord {
