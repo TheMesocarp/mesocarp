@@ -14,6 +14,12 @@ use bytemuck::{Pod, Zeroable};
 use crate::MesoError;
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
+enum Dtype {
+    Pod,
+    Raw,
+}
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
 enum AllocKind {
     Arena { end: u64, counter: usize },
     Solo,
@@ -34,15 +40,17 @@ struct MetaLog {
     offset: usize,
     align: usize,
     alloc_idx: usize,
+    dtype: Dtype,
 }
 
 impl MetaLog {
-    fn new(size: usize, align: usize, offset: usize, alloc_idx: usize) -> Self {
+    fn new(size: usize, align: usize, offset: usize, alloc_idx: usize, dtype: Dtype) -> Self {
         Self {
             size,
             align,
             offset,
             alloc_idx,
+            dtype,
         }
     }
 }
@@ -54,6 +62,7 @@ impl Default for MetaLog {
             align: 8,
             offset: 0,
             alloc_idx: usize::MAX,
+            dtype: Dtype::Pod,
         }
     }
 }
@@ -171,7 +180,7 @@ impl Journal {
 
         if size > self.size || self.arena.is_null() {
             let allocation = unsafe { Allocation::new(size, align, AllocKind::Solo, time) };
-            let meta = MetaLog::new(size, align, 0, self.allocations.len());
+            let meta = MetaLog::new(size, align, 0, self.allocations.len(), Dtype::Pod);
             let log_state = LogState {
                 state: allocation.ptr,
                 meta,
@@ -201,7 +210,70 @@ impl Journal {
             dst.copy_from_slice(bytes);
 
             let _ = state;
-            let meta = MetaLog::new(size, align, offset, self.active_id);
+            let meta = MetaLog::new(size, align, offset, self.active_id, Dtype::Pod);
+            self.state = LogState {
+                state: ptr,
+                meta,
+                time,
+            }
+        }
+
+        self.offset = end;
+        self.current_writes.push(self.state);
+        let mut update_start = false;
+        if let AllocKind::Arena { end, counter } = &mut self.allocations[self.active_id].kind {
+            if *counter == 0 {
+                update_start = true;
+            }
+            *counter += 1;
+            *end = time;
+        }
+        if update_start {
+            self.allocations[self.active_id].start = time;
+        }
+    }
+
+    pub fn write_raw(&mut self, bytes: &[u8], align: usize, time: u64, horizon: Option<u64>) {
+        if let Some(horizon) = horizon {
+            self.check_chop_tail(horizon);
+        }
+
+        let size = bytes.len();
+        let mut offset = (self.offset + align - 1) & !(align - 1);
+        let mut end = offset + size;
+
+        if size > self.size || self.arena.is_null() {
+            let allocation = unsafe { Allocation::new(size, align, AllocKind::Solo, time) };
+            let meta = MetaLog::new(size, align, 0, self.allocations.len(), Dtype::Raw);
+            let log_state = LogState {
+                state: allocation.ptr,
+                meta,
+                time,
+            };
+
+            unsafe {
+                let dst = std::slice::from_raw_parts_mut(allocation.ptr, size);
+                dst.copy_from_slice(bytes);
+            }
+
+            self.allocations.push(allocation);
+            self.state = log_state;
+            self.current_writes.push(log_state);
+            return;
+        } else if end > self.size {
+            self.flush(true);
+            // After flush, offset is 0. Recalculate based on alignment.
+            let current_addr = self.arena as usize;
+            let desired_addr = (current_addr + self.offset + align - 1) & !(align - 1);
+            offset = desired_addr - current_addr;
+            end = offset + size;
+        }
+        unsafe {
+            let ptr = self.arena.add(offset);
+            let dst = std::slice::from_raw_parts_mut(ptr, size);
+            dst.copy_from_slice(bytes);
+
+            let meta = MetaLog::new(size, align, offset, self.active_id, Dtype::Raw);
             self.state = LogState {
                 state: ptr,
                 meta,
@@ -257,73 +329,7 @@ impl Journal {
         }
     }
 
-    /// Reads the most recently written value from the logger.
-    ///
-    /// Returns a reference to the last value that was written to the logger,
-    /// cast to the specified type.
-    pub fn read_state<T: Pod + Zeroable + 'static>(&self) -> Result<&T, MesoError> {
-        let ptr = self.state.state;
-        if ptr.is_null() {
-            return Err(MesoError::UninitializedState);
-        }
-        let out = unsafe { &*(ptr as *const T) };
-        Ok(out)
-    }
-
-    /// Reads the most recently written value from the logger as a mutable reference.
-    ///
-    /// Similar to `read_state()` but the reference returned is mutable.
-    pub fn read_state_mut<T: Pod + Zeroable + 'static>(&mut self) -> Result<&mut T, MesoError> {
-        let ptr = self.state.state;
-        if ptr.is_null() {
-            return Err(MesoError::UninitializedState);
-        }
-        let out = unsafe { &mut *(ptr as *mut T) };
-        Ok(out)
-    }
-
-    /// Reads all flushed entries from the tape as immutable references.
-    ///
-    /// Returns a vector of tuples containing references to the logged data and their
-    /// associated timestamps. Only includes data that has been flushed to the tape,
-    /// not data in the current arena.
-    pub fn read_tape<T: Pod + Zeroable + 'static>(&self) -> Vec<(&T, u64)> {
-        self.tape
-            .iter()
-            .map(|log_state| unsafe {
-                let data = &*(log_state.state as *const T);
-                (data, log_state.time)
-            })
-            .collect()
-    }
-
-    /// Reads all flushed entries from the tape as mutable references.
-    ///
-    /// Similar to `read_tape()`, but returns mutable references that allow
-    /// modification of the logged data in place.
-    pub fn read_tape_mut<T: Pod + Zeroable + 'static>(&mut self) -> Vec<(&mut T, u64)> {
-        self.tape
-            .iter()
-            .map(|log_state| unsafe {
-                let data = &mut *(log_state.state as *mut T);
-                (data, log_state.time)
-            })
-            .collect()
-    }
-
-    /// Reads all logged entries in timestamped order as immutable references
-    pub fn read_all<T: Pod + Zeroable + 'static>(&self) -> Vec<(&T, u64)> {
-        self.tape
-            .iter()
-            .chain(self.current_writes.iter())
-            .map(|log_state| unsafe {
-                let data = &*(log_state.state as *const T);
-                (data, log_state.time)
-            })
-            .collect()
-    }
-
-    /// Deallocates arenas and removes logs with time stamp before a provided `horizon: usize` time
+    /// Deallocates arenas and removes logs with time stamp before a provided `horizon: usize` time.
     fn check_chop_tail(&mut self, horizon: u64) {
         // Step 1: Find and deallocate allocations with end time < horizon
         for alloc in &mut self.allocations {
@@ -588,6 +594,260 @@ impl Journal {
 
         rolled_back_entries
     }
+
+    /// Rolls back and returns the removed entries by deserializing them.
+    ///
+    /// This method will stop and return the first error encountered during deserialization.
+    pub fn rollback_return_raw<T, E, F>(
+        &mut self,
+        time: u64,
+        mut deserializer: F,
+    ) -> Result<Vec<(T, u64)>, Result<E, MesoError>>
+    where
+        F: FnMut(&[u8]) -> Result<T, E>,
+    {
+        if time > self.state.time {
+            return Ok(Vec::new());
+        }
+
+        let mut rolled_back_entries = Vec::new();
+
+        // Deallocate allocations starting after the rollback time.
+        for alloc in &mut self.allocations {
+            if alloc.active && alloc.start >= time {
+                unsafe {
+                    dealloc(alloc.ptr, alloc.layout);
+                }
+                alloc.active = false;
+            }
+        }
+
+        // Process rolled back entries from the tape.
+        let split_point = LogState {
+            state: null_mut(),
+            meta: MetaLog::default(),
+            time,
+        };
+        let to_remove_from_tape = self.tape.split_off(&split_point);
+        for log_state in to_remove_from_tape {
+            if log_state.meta.dtype != Dtype::Raw {
+                return Err(Err(MesoError::JournalDtypeMismatch));
+            }
+            let slice = unsafe { std::slice::from_raw_parts(log_state.state, log_state.meta.size) };
+            let data = deserializer(slice).map_err(|e| Ok(e))?;
+            rolled_back_entries.push((data, log_state.time));
+        }
+
+        // Process rolled back entries from current writes.
+        let mut i = self.current_writes.len();
+        while i > 0 {
+            i -= 1;
+            if self.current_writes[i].time >= time {
+                let log = self.current_writes.remove(i);
+                if self.allocations[log.meta.alloc_idx].active {
+                    if let AllocKind::Arena { counter, .. } =
+                        &mut self.allocations[log.meta.alloc_idx].kind
+                    {
+                        *counter = counter.saturating_sub(1);
+                    }
+                }
+                if log.meta.dtype != Dtype::Raw {
+                    return Err(Err(MesoError::JournalDtypeMismatch));
+                }
+                let slice = unsafe { std::slice::from_raw_parts(log.state, log.meta.size) };
+                let data = deserializer(slice).map_err(|e| Ok(e))?;
+                rolled_back_entries.push((data, log.time));
+            }
+        }
+
+        let new_state = self
+            .current_writes
+            .iter()
+            .rev()
+            .find(|log| log.time < time)
+            .or_else(|| {
+                self.tape
+                    .range(
+                        ..=LogState {
+                            state: null_mut(),
+                            meta: MetaLog::default(),
+                            time,
+                        },
+                    )
+                    .next_back()
+            })
+            .copied();
+
+        match new_state {
+            Some(state) => {
+                self.state = state;
+
+                let alloc_idx = state.meta.alloc_idx;
+                if self.allocations[alloc_idx].active {
+                    self.arena = self.allocations[alloc_idx].ptr;
+                    self.active_id = alloc_idx;
+                    self.offset = state.meta.offset + state.meta.size;
+
+                    if let AllocKind::Arena { end, .. } = &mut self.allocations[alloc_idx].kind {
+                        *end = state.time;
+                    }
+                } else {
+                    self.arena = null_mut();
+                    self.offset = 0;
+                }
+            }
+            None => {
+                self.state = LogState::default();
+                self.arena = null_mut();
+                self.offset = 0;
+            }
+        }
+
+        rolled_back_entries.sort_unstable_by_key(|k| k.1);
+        Ok(rolled_back_entries)
+    }
+
+    /// Reads the most recently written value from the logger.
+    ///
+    /// Returns a reference to the last value that was written to the logger,
+    /// cast to the specified type.
+    pub fn read_state<T: Pod + Zeroable + 'static>(&self) -> Result<&T, MesoError> {
+        let ptr = self.state.state;
+        if ptr.is_null() {
+            return Err(MesoError::UninitializedState);
+        }
+        let out = unsafe { &*(ptr as *const T) };
+        Ok(out)
+    }
+
+    /// Reads and deserializes the most recent state using a provided function.
+    ///
+    /// Returns `Ok(None)` if the journal is empty.
+    /// Returns `Err(E)` if deserialization fails.
+    pub fn read_state_raw<T, E, F>(
+        &self,
+        deserializer: F,
+    ) -> Result<Option<(T, u64)>, Result<E, MesoError>>
+    where
+        F: FnOnce(&[u8]) -> Result<T, E>,
+    {
+        if self.state.state.is_null() {
+            return Ok(None);
+        }
+        if self.state.meta.dtype != Dtype::Raw {
+            return Err(Err(MesoError::JournalDtypeMismatch));
+        }
+        let slice = unsafe { std::slice::from_raw_parts(self.state.state, self.state.meta.size) };
+
+        match deserializer(slice) {
+            Ok(data) => Ok(Some((data, self.state.time))),
+            Err(e) => Err(Ok(e)),
+        }
+    }
+
+    /// Reads the most recently written value from the logger as a mutable reference.
+    ///
+    /// Similar to `read_state()` but the reference returned is mutable.
+    pub fn read_state_mut<T: Pod + Zeroable + 'static>(&mut self) -> Result<&mut T, MesoError> {
+        let ptr = self.state.state;
+        if ptr.is_null() {
+            return Err(MesoError::UninitializedState);
+        }
+        let out = unsafe { &mut *(ptr as *mut T) };
+        Ok(out)
+    }
+
+    /// Reads all flushed entries from the tape as immutable references.
+    ///
+    /// Returns a vector of tuples containing references to the logged data and their
+    /// associated timestamps. Only includes data that has been flushed to the tape,
+    /// not data in the current arena.
+    pub fn read_tape<T: Pod + Zeroable + 'static>(&self) -> Vec<(&T, u64)> {
+        self.tape
+            .iter()
+            .map(|log_state| unsafe {
+                let data = &*(log_state.state as *const T);
+                (data, log_state.time)
+            })
+            .collect()
+    }
+
+    /// Reads and deserializes all flushed entries from the tape using a provided function.
+    ///
+    /// This method will stop and return the first error encountered during deserialization.
+    pub fn read_tape_raw<T, E, F>(
+        &self,
+        mut deserializer: F,
+    ) -> Result<Vec<(T, u64)>, Result<E, MesoError>>
+    where
+        F: FnMut(&[u8]) -> Result<T, E>,
+    {
+        self.tape
+            .iter()
+            .map(|log_state| {
+                if log_state.meta.dtype != Dtype::Raw {
+                    return Err(Err(MesoError::JournalDtypeMismatch));
+                }
+                let slice =
+                    unsafe { std::slice::from_raw_parts(log_state.state, log_state.meta.size) };
+                deserializer(slice)
+                    .map(|data| (data, log_state.time))
+                    .map_err(|e| Ok(e))
+            })
+            .collect()
+    }
+
+    /// Reads all flushed entries from the tape as mutable references.
+    ///
+    /// Similar to `read_tape()`, but returns mutable references that allow
+    /// modification of the logged data in place.
+    pub fn read_tape_mut<T: Pod + Zeroable + 'static>(&mut self) -> Vec<(&mut T, u64)> {
+        self.tape
+            .iter()
+            .map(|log_state| unsafe {
+                let data = &mut *(log_state.state as *mut T);
+                (data, log_state.time)
+            })
+            .collect()
+    }
+
+    /// Reads all logged entries in timestamped order as immutable references. Assumes all logs are the same Pod type.
+    pub fn read_all<T: Pod + Zeroable + 'static>(&self) -> Vec<(&T, u64)> {
+        self.tape
+            .iter()
+            .chain(self.current_writes.iter())
+            .map(|log_state| unsafe {
+                let data = &*(log_state.state as *const T);
+                (data, log_state.time)
+            })
+            .collect()
+    }
+
+    /// Reads and deserializes all logged entries using a provided function.
+    ///
+    /// This method will stop and return the first error encountered during deserialization.
+    pub fn read_all_raw<T, E, F>(
+        &self,
+        mut deserializer: F,
+    ) -> Result<Vec<(T, u64)>, Result<E, MesoError>>
+    where
+        F: FnMut(&[u8]) -> Result<T, E>,
+    {
+        self.tape
+            .iter()
+            .chain(self.current_writes.iter())
+            .map(|log_state| {
+                if log_state.meta.dtype != Dtype::Raw {
+                    return Err(Err(MesoError::JournalDtypeMismatch));
+                }
+                let slice =
+                    unsafe { std::slice::from_raw_parts(log_state.state, log_state.meta.size) };
+                deserializer(slice)
+                    .map(|data| (data, log_state.time))
+                    .map_err(|e| Ok(e))
+            })
+            .collect()
+    }
 }
 
 impl Drop for Journal {
@@ -607,9 +867,10 @@ impl Drop for Journal {
 unsafe impl Send for Journal {}
 unsafe impl Sync for Journal {}
 
-#[cfg(test)]
+#[cfg(all(test, not(feature = "loom")))]
 mod tests {
     use super::*;
+    use bincode::{Decode, Encode};
     use bytemuck::{Pod, Zeroable};
 
     // Test structures with different sizes and alignments
@@ -1360,5 +1621,191 @@ mod tests {
         // Verify the state of the journal after rollback
         assert_eq!(journal.read_state::<SmallState>().unwrap(), &s1);
         assert_eq!(journal.read_all::<SmallState>().len(), 1);
+    }
+
+    // Test structures deriving Serde traits instead of Pod/Zeroable
+    #[derive(Encode, Decode, Clone, Debug, PartialEq)]
+    struct RawSmallState {
+        x: u32,
+        y: f32,
+    }
+
+    #[derive(Encode, Decode, Clone, Debug, PartialEq)]
+    struct RawSimulationState {
+        position: [f32; 3],
+        velocity: [f32; 3],
+        health: u32,
+        mana: u32,
+        flags: u64,
+    }
+
+    #[derive(Encode, Decode, Clone, Debug, PartialEq)]
+    struct RawMassiveState {
+        data: Vec<u8>, // Using Vec for dynamic size
+    }
+
+    #[test]
+    fn raw_test_time_travel_branching() {
+        let mut journal = Journal::init(1024);
+        let config = bincode::config::standard();
+        let deserializer = |bytes: &[u8]| bincode::decode_from_slice(bytes, config).map(|(d, _)| d);
+
+        // Timeline 1: Initial simulation run
+        let s1 = RawSimulationState {
+            position: [0.0, 0.0, 0.0],
+            velocity: [1.0, 0.0, 0.0],
+            health: 100,
+            mana: 50,
+            flags: 0b0001,
+        };
+        let bytes = bincode::encode_to_vec(&s1, config).unwrap();
+        journal.write_raw(&bytes, 8, 100, None);
+
+        let s2 = RawSimulationState {
+            position: [1.0, 0.0, 0.0],
+            velocity: [1.0, 0.0, 0.0],
+            health: 95,
+            mana: 45,
+            flags: 0b0011,
+        };
+        let bytes = bincode::encode_to_vec(&s2, config).unwrap();
+        journal.write_raw(&bytes, 8, 200, None);
+
+        let s3 = RawSimulationState {
+            position: [2.0, 0.0, 0.0],
+            velocity: [1.0, 0.0, 0.0],
+            health: 90,
+            mana: 40,
+            flags: 0b0111,
+        };
+        let bytes = bincode::encode_to_vec(&s3, config).unwrap();
+        journal.write_raw(&bytes, 8, 300, None);
+
+        // Rollback to before a key event
+        journal.rollback(250);
+
+        // Timeline 2: Different choices
+        let s3_alt = RawSimulationState {
+            position: [1.5, 1.0, 0.0],
+            velocity: [0.5, 1.0, 0.0],
+            health: 95, // Healed!
+            mana: 30,
+            flags: 0b0101,
+        };
+        let bytes = bincode::encode_to_vec(&s3_alt, config).unwrap();
+        journal.write_raw(&bytes, 8, 300, None);
+
+        // Verify correct state by deserializing
+        let (current_state, _) = journal.read_state_raw(deserializer).unwrap().unwrap();
+        assert_eq!(current_state, s3_alt);
+
+        // Verify only correct timeline exists
+        let all_states_res: Result<Vec<(RawSimulationState, u64)>, _> =
+            journal.read_all_raw(deserializer);
+        let all_states = all_states_res.unwrap();
+
+        assert_eq!(all_states.len(), 3); // s1, s2, s3_alt
+        assert_eq!(all_states[2].0.health, 95);
+    }
+
+    #[test]
+    fn raw_test_horizon_garbage_collection() {
+        let mut journal = Journal::init(512);
+        let config = bincode::config::standard();
+        let deserializer = |bytes: &[u8]| {
+            bincode::decode_from_slice::<RawSmallState, _>(bytes, config).map(|(d, _)| d)
+        };
+
+        // Create multiple arenas worth of data
+        for i in 0..20 {
+            let state = RawSmallState { x: i, y: i as f32 };
+            let bytes = bincode::encode_to_vec(&state, config).unwrap();
+            journal.write_raw(&bytes, 4, i as u64 * 100, None);
+        }
+
+        // Add with horizon - should trigger cleanup of old data
+        let state = RawSmallState { x: 99, y: 99.0 };
+        let bytes = bincode::encode_to_vec(&state, config).unwrap();
+        journal.write_raw(&bytes, 4, 2100, Some(1000));
+
+        // Verify old data is gone
+        let all = journal.read_all_raw(deserializer).unwrap();
+        assert!(all.iter().all(|(_, t)| *t >= 1000));
+        assert!(all.len() < 15); // Should have removed early entries
+    }
+
+    #[test]
+    fn raw_test_massive_allocations_and_rollback() {
+        let mut journal = Journal::init(256);
+        let config = bincode::config::standard();
+        let deserializer = |bytes: &[u8]| {
+            bincode::decode_from_slice::<RawMassiveState, _>(bytes, config).map(|(d, _)| d)
+        };
+
+        // Normal write
+        let small_state = RawSmallState { x: 1, y: 1.0 };
+        let bytes = bincode::encode_to_vec(&small_state, config).unwrap();
+        journal.write_raw(&bytes, 4, 100, None);
+
+        // Massive write - forces solo allocation
+        let massive = RawMassiveState {
+            data: vec![42; 4096],
+        };
+        let bytes = bincode::encode_to_vec(&massive, config).unwrap();
+        journal.write_raw(&bytes, 8, 200, None);
+
+        // Another normal write - should get new arena
+        let small_state2 = RawSmallState { x: 2, y: 2.0 };
+        let bytes = bincode::encode_to_vec(&small_state2, config).unwrap();
+        journal.write_raw(&bytes, 4, 300, None);
+
+        // Rollback past massive allocation
+        journal.rollback(150);
+
+        // Verify massive allocation was freed by writing another
+        let massive2 = RawMassiveState {
+            data: vec![77; 4096],
+        };
+        let bytes = bincode::encode_to_vec(&massive2, config).unwrap();
+        journal.write_raw(&bytes, 8, 200, None);
+
+        let (current_state, _) = journal.read_state_raw(deserializer).unwrap().unwrap();
+        assert_eq!(current_state.data[0], 77);
+    }
+
+    #[test]
+    fn raw_test_rollback_return_claims_data() {
+        let mut journal = Journal::init(256);
+        let config = bincode::config::standard();
+        let deserializer = |bytes: &[u8]| {
+            bincode::decode_from_slice::<RawSmallState, _>(bytes, config).map(|(d, _)| d)
+        };
+
+        let s1 = RawSmallState { x: 1, y: 1.0 };
+        let bytes = bincode::encode_to_vec(&s1, config).unwrap();
+        journal.write_raw(&bytes, 4, 100, None);
+
+        let s2 = RawSmallState { x: 2, y: 2.0 };
+        let bytes = bincode::encode_to_vec(&s2, config).unwrap();
+        journal.write_raw(&bytes, 4, 200, None);
+
+        let s3 = RawSmallState { x: 3, y: 3.0 };
+        let bytes = bincode::encode_to_vec(&s3, config).unwrap();
+        journal.write_raw(&bytes, 4, 300, None);
+
+        // Rollback and claim the data using the new method
+        let claimed_data = journal.rollback_return_raw(150, deserializer).unwrap();
+
+        // Verify the claimed data
+        assert_eq!(claimed_data.len(), 2);
+        assert_eq!(claimed_data[0].0, s2);
+        assert_eq!(claimed_data[0].1, 200);
+        assert_eq!(claimed_data[1].0, s3);
+        assert_eq!(claimed_data[1].1, 300);
+
+        // Verify the state of the journal after rollback
+        let (current_state, _) = journal.read_state_raw(deserializer).unwrap().unwrap();
+        assert_eq!(current_state, s1);
+        assert_eq!(journal.read_all_raw(deserializer).unwrap().len(), 1);
     }
 }

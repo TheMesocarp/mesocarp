@@ -225,7 +225,7 @@ impl<const SLOTS: usize, T: Clone> Subscriber<SLOTS, T> {
 unsafe impl<const SLOTS: usize, T: Clone> Send for Subscriber<SLOTS, T> {}
 unsafe impl<const SLOTS: usize, T: Clone> Sync for Subscriber<SLOTS, T> {}
 
-#[cfg(test)]
+#[cfg(all(test, not(feature = "loom")))]
 mod broadcast_tests {
     use super::*;
     use crate::MesoError as WheelError;
@@ -508,7 +508,7 @@ mod broadcast_tests {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(feature = "loom")))]
 mod worker_queue_tests {
     use super::*;
     use crate::MesoError as QueueError;

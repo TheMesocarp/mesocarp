@@ -6,8 +6,17 @@
 //! data processing.
 
 use std::ptr;
-use std::sync::atomic::Ordering::{Acquire, Relaxed, Release};
-use std::sync::atomic::{AtomicPtr, AtomicUsize};
+#[cfg(not(feature = "loom"))]
+use std::sync::atomic::{
+    AtomicPtr, AtomicUsize,
+    Ordering::{Acquire, Relaxed, Release},
+};
+
+#[cfg(feature = "loom")]
+use loom::sync::atomic::{
+    AtomicPtr, AtomicUsize,
+    Ordering::{Acquire, Relaxed, Release},
+};
 
 use crate::MesoError;
 
@@ -106,7 +115,7 @@ impl<const N: usize, T> BufferWheel<N, T> {
 unsafe impl<const N: usize, T: Clone> Send for BufferWheel<N, T> {}
 unsafe impl<const N: usize, T: Clone> Sync for BufferWheel<N, T> {}
 
-#[cfg(test)]
+#[cfg(all(test, not(feature = "loom")))]
 mod spsc_tests {
     use super::*;
     use std::sync::Arc;
@@ -391,7 +400,7 @@ mod spsc_tests {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(feature = "loom")))]
 mod bufferwheel_brutal_stress_tests {
     use super::*;
     use std::collections::HashSet;
@@ -657,3 +666,428 @@ mod bufferwheel_brutal_stress_tests {
         );
     }
 }
+
+// #[cfg(all(test, feature = "loom"))]
+// mod loom_tests {
+//     use super::*;
+//     use loom::sync::Arc;
+//     use loom::thread;
+
+//     // aggressive tiny caps to force wraparound & contention
+//     const N2: usize = 2;
+
+//     // helper: spin on a closure until Ok
+//     fn push_blocking<const N: usize>(q: &BufferWheel<N, usize>, v: usize) {
+//         loop {
+//             match q.write(v) {
+//                 Ok(()) => break,
+//                 Err(MesoError::BuffersFull) => thread::yield_now(),
+//                 Err(e) => panic!("producer unexpected error: {e:?}"),
+//             }
+//         }
+//     }
+//     fn pop_blocking<const N: usize>(q: &BufferWheel<N, usize>) -> usize {
+//         loop {
+//             match q.read() {
+//                 Ok(v) => return v,
+//                 Err(MesoError::NoPendingUpdates) => thread::yield_now(),
+//                 Err(e) => panic!("consumer unexpected error: {e:?}"),
+//             }
+//         }
+//     }
+
+//     // Bursty writer vs. slow reader with N=2: push batches without yielding, then yield a lot.
+//     #[test]
+//     fn loom_bursty_writer_slow_reader() {
+//         loom::model(|| {
+//             let q = Arc::new(BufferWheel::<N2, usize>::default());
+//             let p = q.clone();
+//             let c = q.clone();
+
+//             let prod = thread::spawn(move || {
+//                 for i in 0..16 {
+//                     // burst: try two writes back-to-back to stress full condition
+//                     push_blocking(&p, i);
+//                     if i % 2 == 0 {
+//                         // try to wedge a second write immediately
+//                         match p.write(i | 0x1000) {
+//                             Ok(()) => {}
+//                             Err(MesoError::BuffersFull) => {}
+//                             Err(e) => panic!("producer burst error: {e:?}"),
+//                         }
+//                     }
+//                     thread::yield_now();
+//                 }
+//             });
+
+//             let cons = thread::spawn(move || {
+//                 let mut seen = Vec::new();
+//                 while seen.len() < 16 {
+//                     // be obnoxiously slow sometimes
+//                     for _ in 0..2 {
+//                         thread::yield_now();
+//                     }
+//                     match c.read() {
+//                         Ok(v) => seen.push(v),
+//                         Err(MesoError::NoPendingUpdates) => thread::yield_now(),
+//                         Err(e) => panic!("consumer error: {e:?}"),
+//                     }
+//                 }
+
+//                 // should be monotone nondecreasing and contain 0..15 in order
+//                 let mut expected = 0usize;
+//                 for v in seen {
+//                     if v & 0x1000 == 0 {
+//                         assert_eq!(v, expected);
+//                         expected += 1;
+//                     } else {
+//                         // burst write may or may not have landed depending on timing,
+//                         // but it must never displace or reorder base sequence.
+//                     }
+//                 }
+//                 assert_eq!(expected, 16);
+//             });
+
+//             prod.join().unwrap();
+//             cons.join().unwrap();
+//         });
+//     }
+
+//     // Bursty reader vs. slow writer: consumer attempts speculative reads often.
+//     #[test]
+//     fn loom_bursty_reader_slow_writer() {
+//         loom::model(|| {
+//             let q = Arc::new(BufferWheel::<N2, usize>::default());
+//             let p = q.clone();
+//             let c = q.clone();
+
+//             let prod = thread::spawn(move || {
+//                 for i in 0..16 {
+//                     // occasionally stall before writing to maximize empty reads
+//                     if i % 3 == 0 {
+//                         thread::yield_now();
+//                     }
+//                     push_blocking(&p, i);
+//                 }
+//             });
+
+//             let cons = thread::spawn(move || {
+//                 let mut out = Vec::new();
+//                 while out.len() < 16 {
+//                     // “speculative” tight loop reads
+//                     match c.read() {
+//                         Ok(v) => out.push(v),
+//                         Err(MesoError::NoPendingUpdates) => {
+//                             // hammer the scheduler a bit
+//                             for _ in 0..3 {
+//                                 thread::yield_now();
+//                             }
+//                         }
+//                         Err(e) => panic!("consumer error: {e:?}"),
+//                     }
+//                 }
+//                 assert_eq!(out, (0..16).collect::<Vec<_>>());
+//             });
+
+//             prod.join().unwrap();
+//             cons.join().unwrap();
+//         });
+//     }
+
+//     // Chaotic interleavings with randomized yields via the fuzz! macro if available.
+//     // Falls back to a deterministic pattern otherwise.
+//     #[test]
+//     fn loom_contention_fuzzer() {
+//         loom::model(|| {
+//             let q = Arc::new(BufferWheel::<N2, usize>::default());
+//             let p = q.clone();
+//             let c = q.clone();
+
+//             #[allow(unused_macros)]
+//             macro_rules! maybe_yield {
+//                 ($i:expr) => {{
+//                     #[cfg(feature = "loom")]
+//                     {
+//                         //loom::fuzz!();
+//                         if ($i & 1) == 0 {
+//                             thread::yield_now();
+//                         }
+//                     }
+//                     #[cfg(not(feature = "loom"))]
+//                     {
+//                         if ($i & 1) == 0 {
+//                             thread::yield_now();
+//                         }
+//                     }
+//                 }};
+//             }
+
+//             let prod = thread::spawn(move || {
+//                 for i in 0..32 {
+//                     if i % 4 == 0 {
+//                         thread::yield_now();
+//                     }
+//                     push_blocking(&p, i);
+//                     maybe_yield!(i);
+//                 }
+//             });
+
+//             let cons = thread::spawn(move || {
+//                 let mut out = Vec::with_capacity(32);
+//                 while out.len() < 32 {
+//                     if out.len() % 5 == 0 {
+//                         thread::yield_now();
+//                     }
+//                     match c.read() {
+//                         Ok(v) => {
+//                             if let Some(&last) = out.last() {
+//                                 assert_eq!(v, last + 1);
+//                             } else {
+//                                 assert_eq!(v, 0);
+//                             }
+//                             out.push(v);
+//                         }
+//                         Err(MesoError::NoPendingUpdates) => thread::yield_now(),
+//                         Err(e) => panic!("consumer error: {e:?}"),
+//                     }
+//                 }
+//             });
+
+//             prod.join().unwrap();
+//             cons.join().unwrap();
+//         });
+//     }
+
+//     // Simultaneous start + repeated wrap + interspersed flushes:
+//     // both sides race to start; producer sometimes tries extra writes; consumer batches reads.
+//     #[test]
+//     fn loom_simultaneous_start_batching() {
+//         loom::model(|| {
+//             let q = Arc::new(BufferWheel::<N2, usize>::default());
+//             let start = Arc::new(loom::sync::atomic::AtomicUsize::new(0));
+//             let p = q.clone();
+//             let c = q.clone();
+//             let sp = start.clone();
+//             let sc = start.clone();
+
+//             let prod = thread::spawn(move || {
+//                 sp.fetch_add(1, loom::sync::atomic::Ordering::SeqCst);
+//                 while sp.load(loom::sync::atomic::Ordering::SeqCst) < 2 {
+//                     thread::yield_now();
+//                 }
+
+//                 for i in 0..24 {
+//                     // try to “peek-ahead” with an immediate second write occasionally
+//                     push_blocking(&p, i);
+//                     if i % 3 == 0 {
+//                         let _ = p.write(0xDEAD_0000 | i); // may fail due to full
+//                     }
+//                     if i % 2 == 0 {
+//                         thread::yield_now();
+//                     }
+//                 }
+//             });
+
+//             let cons = thread::spawn(move || {
+//                 sc.fetch_add(1, loom::sync::atomic::Ordering::SeqCst);
+//                 while sc.load(loom::sync::atomic::Ordering::SeqCst) < 2 {
+//                     thread::yield_now();
+//                 }
+
+//                 let mut want = 0usize;
+//                 while want < 24 {
+//                     for _ in 0..2 {
+//                         match c.read() {
+//                             Ok(v) => {
+//                                 if v & 0xDEAD_0000 == 0 {
+//                                     assert_eq!(v, want);
+//                                     want += 1;
+//                                 } else {
+//                                     // extra write must not break order of the base sequence
+//                                 }
+//                             }
+//                             Err(MesoError::NoPendingUpdates) => break,
+//                             Err(e) => panic!("consumer error: {e:?}"),
+//                         }
+//                     }
+//                     thread::yield_now();
+//                 }
+//             });
+
+//             prod.join().unwrap();
+//             cons.join().unwrap();
+//         });
+//     }
+// }
+
+// #[cfg(all(test, feature = "loom"))]
+// mod loom_fair_blocking {
+//     use super::*;
+//     use loom::sync::atomic::{AtomicUsize, Ordering::SeqCst};
+//     use loom::sync::{Arc, Condvar, Mutex};
+//     use loom::thread;
+
+//     // Each side gets up to this many ops before handing off (throughput pressure without starvation).
+//     const WINDOW: usize = 4;
+//     // Total items to push through.
+//     const K: usize = 64;
+
+//     // A two-party windowed token with blocking handoff (no spinning).
+//     struct Token {
+//         // (owner: 0=prod, 1=cons, remaining_quota)
+//         state: Mutex<(usize, usize)>,
+//         cv: Condvar,
+//     }
+//     impl Token {
+//         fn new(start_owner: usize) -> Self {
+//             Self {
+//                 state: Mutex::new((start_owner, WINDOW)),
+//                 cv: Condvar::new(),
+//             }
+//         }
+
+//         // Block until it's my turn and I have quota. Returns a guard carrying ownership.
+//         fn acquire(&self, me: usize) -> TokenGuard<'_> {
+//             let mut st = self.state.lock().unwrap();
+//             // Wait until it's my turn and I have quota
+//             while !(st.0 == me && st.1 > 0) {
+//                 st = self.cv.wait(st).unwrap();
+//             }
+//             TokenGuard {
+//                 token: self,
+//                 inner: st,
+//                 me,
+//             }
+//         }
+//     }
+
+//     struct TokenGuard<'a> {
+//         token: &'a Token,
+//         inner: loom::sync::MutexGuard<'a, (usize, usize)>,
+//         me: usize,
+//     }
+//     impl TokenGuard<'_> {
+//         // Consume 1 unit of quota; keep token if quota remains.
+//         fn consume(mut self) -> Self {
+//             self.inner.1 -= 1;
+//             self
+//         }
+//         // Give token to the other side now (e.g., couldn't progress).
+//         fn handoff_now(mut self) {
+//             self.inner.0 ^= 1; // switch owner
+//             self.inner.1 = WINDOW; // reset quota
+//             self.token.cv.notify_all();
+//             // drop guard, releasing lock
+//         }
+//         // Finish this op; if quota is exhausted, hand off; else keep with current owner.
+//         fn finish(mut self) {
+//             if self.inner.1 == 0 {
+//                 self.inner.0 ^= 1;
+//                 self.inner.1 = WINDOW;
+//                 self.token.cv.notify_all();
+//             } else {
+//                 // still our turn; wake peer in case they're waiting on state changes
+//                 self.token.cv.notify_all();
+//             }
+//             // drop guard
+//         }
+//     }
+
+//     // Attempt a single write; on full, caller should hand off.
+//     fn try_write<const N: usize>(q: &BufferWheel<N, usize>, v: usize) -> bool {
+//         match q.write(v) {
+//             Ok(()) => true,
+//             Err(MesoError::BuffersFull) => false,
+//             Err(e) => panic!("producer unexpected error: {e:?}"),
+//         }
+//     }
+
+//     // Attempt a single read; on empty, caller should hand off.
+//     fn try_read<const N: usize>(q: &BufferWheel<N, usize>) -> Option<usize> {
+//         match q.read() {
+//             Ok(v) => Some(v),
+//             Err(MesoError::NoPendingUpdates) => None,
+//             Err(e) => panic!("consumer unexpected error: {e:?}"),
+//         }
+//     }
+
+//     fn run_blocking<const N: usize>(start_with_producer: bool) {
+//         let mut b = loom::model::Builder::new();
+//         // Small preemption bound trims irrelevant schedules but still allows interleavings.
+//         b.preemption_bound = Some(3);
+
+//         b.check(move || {
+//             let q = Arc::new(BufferWheel::<N, usize>::default());
+//             let token = Arc::new(Token::new(if start_with_producer { 0 } else { 1 }));
+//             let prod_done = Arc::new(AtomicUsize::new(0));
+//             let cons_done = Arc::new(AtomicUsize::new(0));
+
+//             // Producer
+//             {
+//                 let q = q.clone();
+//                 let token = token.clone();
+//                 let prod_done = prod_done.clone();
+//                 thread::spawn(move || {
+//                     let mut next = 0usize;
+//                     while next < K {
+//                         // Take the token (blocks without spinning)
+//                         let guard = token.acquire(0);
+//                         // Use one unit of quota:
+//                         let guard = guard.consume();
+
+//                         // Attempt exactly one write. If full, hand off immediately.
+//                         if try_write(&q, next) {
+//                             next += 1;
+//                             prod_done.fetch_add(1, SeqCst);
+//                             guard.finish(); // keep turn if quota left, else hand off
+//                         } else {
+//                             guard.handoff_now(); // can't progress; give peer a chance
+//                         }
+//                     }
+//                     // After finishing all writes, proactively hand off to consumer
+//                     let guard = token.acquire(0).consume();
+//                     guard.handoff_now();
+//                 });
+//             }
+
+//             // Consumer
+//             {
+//                 let q = q.clone();
+//                 let token = token.clone();
+//                 let cons_done = cons_done.clone();
+//                 thread::spawn(move || {
+//                     let mut want = 0usize;
+//                     while want < K {
+//                         let guard = token.acquire(1);
+//                         let guard = guard.consume();
+
+//                         if let Some(v) = try_read(&q) {
+//                             // STRICT FIFO monotonicity: detects overwrite/dup/skip instantly.
+//                             assert_eq!(
+//                                 v, want,
+//                                 "out-of-order or overwrite detected: got {v}, want {want}"
+//                             );
+//                             want += 1;
+//                             cons_done.fetch_add(1, SeqCst);
+//                             guard.finish();
+//                         } else {
+//                             guard.handoff_now(); // empty; let producer progress
+//                         }
+//                     }
+//                 });
+//             }
+//         });
+//     }
+
+//     // Max contention; N=1
+//     #[test]
+//     fn fair_blocking_monotonic_n1() {
+//         run_blocking::<1>(true);
+//     }
+
+//     // N=2, start with consumer for variety
+//     #[test]
+//     fn fair_blocking_monotonic_n2() {
+//         run_blocking::<2>(false);
+//     }
+// }

@@ -3,7 +3,7 @@
 [![License: LGPL v2.1](https://img.shields.io/badge/License-LGPL_v2.1-blue.svg)](https://www.gnu.org/licenses/lgpl-2.1)
 ![Tests](https://github.com/TheMesocarp/mesocarp/workflows/Tests/badge.svg)
 
-High-performance primitives for concurrency, synchronization, scheduling, and logging. The cookbook of everything you need to make actor systems scale efficiently.
+High-performance primitives for concurrency, synchronization, scheduling, and logging. The cookbook of everything you need to make actor systems scale efficiently. Use with caution as most are still being tested.
 
 ## Contributing
 
