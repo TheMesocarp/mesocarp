@@ -81,4 +81,6 @@ pub enum MesoError {
     ImproperMessagePassing,
     #[error("Attempted to send a `Message` to a nonexistent user.")]
     InvalidUserId,
+    #[error("Attempted to read a journal with the wrong Dtype!")]
+    JournalDtypeMismatch,
 }

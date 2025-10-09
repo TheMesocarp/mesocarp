@@ -11,7 +11,7 @@ use crate::{
 
 // Basic trait for a direct message between two entities
 pub trait Message: Clone {
-    fn to(&self) -> Option<usize>;
+    fn to(&self) -> usize;
     fn from(&self) -> usize;
 }
 
@@ -76,7 +76,8 @@ impl<const SLOTS: usize, T: Message> ThreadedMessenger<SLOTS, T> {
             loop {
                 match outbox.read() {
                     Ok(msg) => {
-                        if let Some(to) = msg.to() {
+                        let to = msg.to();
+                        if to != usize::MAX {
                             // Fix: Validate target exists
                             if to >= self.capacity {
                                 return Err(MesoError::NotFound {
@@ -127,11 +128,10 @@ pub struct ThreadedMessengerUser<const SLOTS: usize, T: Message> {
 impl<const SLOTS: usize, T: Message> ThreadedMessengerUser<SLOTS, T> {
     /// Send a message through the world's routing system
     pub fn send(&self, message: T) -> Result<(), MesoError> {
+        let id = message.to();
         // Write to our outbox - world will route it during poll()
-        if let Some(id) = message.to() {
-            if id >= self.user_count {
-                return Err(MesoError::InvalidUserId);
-            }
+        if message.to() != usize::MAX && id >= self.user_count {
+            return Err(MesoError::InvalidUserId);
         }
         self.comms[1].write(message)
     }
@@ -181,7 +181,7 @@ unsafe impl<const SLOTS: usize, T: Message> Sync for ThreadedMessenger<SLOTS, T>
 unsafe impl<const SLOTS: usize, T: Message> Send for ThreadedMessengerUser<SLOTS, T> {}
 unsafe impl<const SLOTS: usize, T: Message> Sync for ThreadedMessengerUser<SLOTS, T> {}
 
-#[cfg(test)]
+#[cfg(all(test, not(feature = "loom")))]
 mod tests {
     use super::*;
 
@@ -190,13 +190,13 @@ mod tests {
         timestamp: u64,
         commit_time: u64,
         from_id: usize,
-        to_id: Option<usize>,
+        to_id: usize,
         is_broadcast: bool,
         data: String,
     }
 
     impl Message for TestMessage {
-        fn to(&self) -> Option<usize> {
+        fn to(&self) -> usize {
             self.to_id
         }
 
@@ -234,7 +234,7 @@ mod tests {
             timestamp: 100,
             commit_time: 90,
             from_id: 0,
-            to_id: Some(1),
+            to_id: 1,
             is_broadcast: false,
             data: "hello".to_string(),
         };
@@ -264,7 +264,7 @@ mod tests {
             timestamp: 200,
             commit_time: 190,
             from_id: 0,
-            to_id: None,
+            to_id: usize::MAX,
             is_broadcast: true,
             data: "broadcast".to_string(),
         };
@@ -281,10 +281,10 @@ mod tests {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(feature = "loom")))]
 mod threaded_messenger_stress_tests {
     use super::*;
-    //use std::sync::atomic::{AtomicUsize, Ordering};
+    // use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Barrier;
     use std::thread;
     use std::time::Duration;
@@ -295,11 +295,11 @@ mod threaded_messenger_stress_tests {
         // A unique ID for every message sent.
         sequence: u64,
         from_id: usize,
-        to_id: Option<usize>,
+        to_id: usize,
     }
 
     impl Message for StressMessage {
-        fn to(&self) -> Option<usize> {
+        fn to(&self) -> usize {
             self.to_id
         }
         fn from(&self) -> usize {
@@ -348,7 +348,7 @@ mod threaded_messenger_stress_tests {
                     let msg = StressMessage {
                         sequence: (my_id * NUM_USERS + i) as u64,
                         from_id: my_id,
-                        to_id: Some(i),
+                        to_id: i,
                     };
                     user.send(msg.clone()).unwrap();
                     sent_messages.push(msg);
@@ -366,8 +366,7 @@ mod threaded_messenger_stress_tests {
                 // Final check: Did we get messages meant for someone else?
                 for msg in &received_messages {
                     assert_eq!(
-                        msg.to_id,
-                        Some(my_id),
+                        msg.to_id, my_id,
                         "FATAL: Received a message not intended for me!"
                     );
                 }
@@ -443,12 +442,15 @@ mod threaded_messenger_stress_tests {
 
     //                 // A simple condition to eventually stop the poller.
     //                 // In a real app, this would be a more robust shutdown signal.
-    //                 let total_sent = cloned_dir.load(Ordering::Relaxed) + cloned_b.load(Ordering::Relaxed);
+    //                 let total_sent =
+    //                     cloned_dir.load(Ordering::Relaxed) + cloned_b.load(Ordering::Relaxed);
     //                 if total_sent >= NUM_USERS * MSGS_PER_USER {
     //                     // Poll a few more times to drain any in-flight messages
     //                     for _ in 0..100 {
-    //                        if let Ok(msgs) = w.poll() { w.deliver(msgs).unwrap(); }
-    //                        thread::sleep(Duration::from_micros(1));
+    //                         if let Ok(msgs) = w.poll() {
+    //                             w.deliver(msgs).unwrap();
+    //                         }
+    //                         thread::sleep(Duration::from_micros(1));
     //                     }
     //                     break;
     //                 }
@@ -472,13 +474,21 @@ mod threaded_messenger_stress_tests {
     //                     // Send a mix of direct and broadcast messages
     //                     if i % 3 == 0 {
     //                         // Broadcast
-    //                         let msg = StressMessage { sequence: seq, from_id: my_id, to_id: None };
+    //                         let msg = StressMessage {
+    //                             sequence: seq,
+    //                             from_id: my_id,
+    //                             to_id: usize::MAX,
+    //                         };
     //                         user.send(msg).unwrap();
     //                         sb.fetch_add(1, Ordering::Relaxed);
     //                     } else {
     //                         // Direct message to a different user
     //                         let target_id = (my_id + 1 + (i % (NUM_USERS - 1))) % NUM_USERS;
-    //                         let msg = StressMessage { sequence: seq, from_id: my_id, to_id: Some(target_id) };
+    //                         let msg = StressMessage {
+    //                             sequence: seq,
+    //                             from_id: my_id,
+    //                             to_id: target_id,
+    //                         };
     //                         user.send(msg).unwrap();
     //                         sd.fetch_add(1, Ordering::Relaxed);
     //                     }
@@ -487,9 +497,16 @@ mod threaded_messenger_stress_tests {
     //                     if i % 5 == 0 {
     //                         if let Some(msgs) = user.poll() {
     //                             for msg in msgs {
-    //                                 assert!(received_log.insert(msg.clone()), "FATAL: Duplicate message received: {:?}", msg);
-    //                                 if msg.to_id.is_some() {
-    //                                     assert_eq!(msg.to_id, Some(my_id), "FATAL: Received direct message for wrong user!");
+    //                                 assert!(
+    //                                     received_log.insert(msg.clone()),
+    //                                     "FATAL: Duplicate message received: {:?}",
+    //                                     msg
+    //                                 );
+    //                                 if msg.to_id != usize::MAX {
+    //                                     assert_eq!(
+    //                                         msg.to_id, my_id,
+    //                                         "FATAL: Received direct message for wrong user!"
+    //                                     );
     //                                     rd.fetch_add(1, Ordering::Relaxed);
     //                                 } else {
     //                                     rb.fetch_add(1, Ordering::Relaxed);
@@ -502,10 +519,17 @@ mod threaded_messenger_stress_tests {
     //                 // Final poll to drain any remaining messages
     //                 loop {
     //                     if let Some(msgs) = user.poll() {
-    //                        for msg in msgs {
-    //                             assert!(received_log.insert(msg.clone()), "FATAL: Duplicate message received: {:?}", msg);
-    //                             if msg.to_id.is_some() {
-    //                                 assert_eq!(msg.to_id, Some(my_id), "FATAL: Received direct message for wrong user!");
+    //                         for msg in msgs {
+    //                             assert!(
+    //                                 received_log.insert(msg.clone()),
+    //                                 "FATAL: Duplicate message received: {:?}",
+    //                                 msg
+    //                             );
+    //                             if msg.to_id != usize::MAX {
+    //                                 assert_eq!(
+    //                                     msg.to_id, my_id,
+    //                                     "FATAL: Received direct message for wrong user!"
+    //                                 );
     //                                 rd.fetch_add(1, Ordering::Relaxed);
     //                             } else {
     //                                 rb.fetch_add(1, Ordering::Relaxed);
@@ -515,7 +539,9 @@ mod threaded_messenger_stress_tests {
     //                         // Break when no more messages are coming in for a bit.
     //                         // This is heuristic but fine for a test.
     //                         thread::sleep(Duration::from_millis(50));
-    //                         if user.poll().is_none() { break; }
+    //                         if user.poll().is_none() {
+    //                             break;
+    //                         }
     //                     }
     //                 }
     //             });
@@ -535,9 +561,18 @@ mod threaded_messenger_stress_tests {
     //     println!("Direct Received:  {}", total_direct_received);
     //     println!("Broadcast Sent:     {}", total_broadcast_sent);
     //     println!("Broadcast Received: {}", total_broadcast_received);
-    //     println!("(Expected Broadcast Received: {})", expected_broadcast_received);
+    //     println!(
+    //         "(Expected Broadcast Received: {})",
+    //         expected_broadcast_received
+    //     );
 
-    //     assert_eq!(total_direct_sent, total_direct_received, "Mismatch in direct message counts!");
-    //     assert_eq!(expected_broadcast_received, total_broadcast_received, "Mismatch in broadcast message counts!");
+    //     assert_eq!(
+    //         total_direct_sent, total_direct_received,
+    //         "Mismatch in direct message counts!"
+    //     );
+    //     assert_eq!(
+    //         expected_broadcast_received, total_broadcast_received,
+    //         "Mismatch in broadcast message counts!"
+    //     );
     // }
 }
