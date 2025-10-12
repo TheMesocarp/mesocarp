@@ -867,7 +867,7 @@ impl Drop for Journal {
 unsafe impl Send for Journal {}
 unsafe impl Sync for Journal {}
 
-#[cfg(all(test, not(feature = "loom")))]
+#[allow(dead_code, unused_imports)]
 mod tests {
     use super::*;
     use bincode::{Decode, Encode};

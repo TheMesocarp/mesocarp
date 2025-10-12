@@ -175,11 +175,11 @@ unsafe impl<T: Message> Sync for ThreadedMessenger<T> {}
 unsafe impl<T: Message> Send for ThreadedMessengerUser<T> {}
 unsafe impl<T: Message> Sync for ThreadedMessengerUser<T> {}
 
-#[cfg(all(test, not(feature = "loom")))]
 mod tests {
     use super::*;
 
     #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+    #[allow(dead_code)]
     struct TestMessage {
         timestamp: u64,
         commit_time: u64,

@@ -21,9 +21,9 @@ impl<T: Clone> Broadcaster<T> {
         Subscriber(Arc::clone(&self.0[subscriber_id]))
     }
 
-    pub fn push(&mut self, value: T) -> Result<(), MesoError> {
+    pub fn push(&self, value: T) -> Result<(), MesoError> {
         self.0
-            .iter_mut()
+            .iter()
             .try_for_each(|x| x.push(value.clone()).map_err(|_| MesoError::BuffersFull))?;
         Ok(())
     }
