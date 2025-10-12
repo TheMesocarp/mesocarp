@@ -22,13 +22,12 @@ impl<T: Clone> Broadcaster<T> {
     }
 
     pub fn push(&mut self, value: T) -> Result<(), MesoError> {
-        self.0.iter_mut().try_for_each(|x| {
-            x.push(value.clone()).map_err(|_| MesoError::BuffersFull)
-        })?;
+        self.0
+            .iter_mut()
+            .try_for_each(|x| x.push(value.clone()).map_err(|_| MesoError::BuffersFull))?;
         Ok(())
     }
-} 
-
+}
 
 #[derive(Debug)]
 pub struct Subscriber<T: Clone>(Arc<ArrayQueue<T>>);

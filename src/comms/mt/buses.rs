@@ -2,8 +2,8 @@
 use crossbeam_queue::ArrayQueue;
 use std::sync::Arc;
 
-use crate::MesoError;
 use super::{Broadcaster, Subscriber};
+use crate::MesoError;
 
 // Basic trait for a direct message between two entities
 pub trait Message: Clone {
@@ -60,10 +60,7 @@ impl<T: Message> ThreadedMessenger<T> {
         self.registered += 1;
         Ok(ThreadedMessengerUser {
             thread_id: i,
-            comms: [
-                Arc::clone(&self.dirin[i]),
-                Arc::clone(&self.dirout[i]),
-            ],
+            comms: [Arc::clone(&self.dirin[i]), Arc::clone(&self.dirout[i])],
             subscriber,
             user_count: self.capacity,
             slots: self.slots,
