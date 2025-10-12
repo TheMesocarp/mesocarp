@@ -9,13 +9,14 @@ license     = "LGPL-2.1"
 name        = "mesocarp"
 readme      = "README.md"
 repository  = "https://github.com/TheMesocarp/mesocarp"
-version     = "0.11.0"
+version     = "0.12.0"
 
 [dependencies]
-array-init = "2.1.0"
-bytemuck   = "1.23.1"
-loom       = "0.7.2"
-thiserror  = "2.0.12"
+array-init      = "2.1.0"
+bytemuck        = "1.23.1"
+crossbeam-queue = "0.3.2"
+loom            = "0.7.2"
+thiserror       = "2.0.12"
 
 [dev-dependencies]
 bincode = { version = "2.0.1", features = ["derive"] }
