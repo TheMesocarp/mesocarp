@@ -13,7 +13,7 @@ version     = "0.12.1"
 
 [dependencies]
 array-init      = "2.1.0"
+bincode         = { version = "2.0.1", features = ["derive"] }
 bytemuck        = "1.23.1"
 crossbeam-queue = "0.3.2"
 thiserror       = "2.0.12"
-bincode = { version = "2.0.1", features = ["derive"] }
