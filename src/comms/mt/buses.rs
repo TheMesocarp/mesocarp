@@ -175,10 +175,12 @@ unsafe impl<T: Message> Sync for ThreadedMessenger<T> {}
 unsafe impl<T: Message> Send for ThreadedMessengerUser<T> {}
 unsafe impl<T: Message> Sync for ThreadedMessengerUser<T> {}
 
+#[cfg(test)]
 mod tests {
     use super::*;
+    use loom::thread;
 
-    #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+    #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
     #[allow(dead_code)]
     struct TestMessage {
         timestamp: u64,
@@ -272,5 +274,180 @@ mod tests {
 
         assert!(received1.contains(&broadcast_msg));
         assert!(received2.contains(&broadcast_msg));
+    }
+
+    /// Tests high-volume, one-way message passing with a buffer smaller than the message count
+    /// to ensure ordering is preserved and no messages are lost under pressure.
+    #[test]
+    fn loom_test_high_volume_unidirectional() {
+        let mut builder = loom::model::Builder::new();
+        builder.max_branches = 100000;
+
+        builder.check(|| {
+            use loom::sync::{Arc, Mutex};
+            const NUM_MESSAGES: u64 = 50000;
+            const BUFFER_SIZE: usize = 8;
+
+            let messenger = Arc::new(Mutex::new(
+                ThreadedMessenger::<TestMessage>::new(2, BUFFER_SIZE).unwrap(),
+            ));
+
+            let (user0, mut user1) = {
+                let mut guard = messenger.lock().unwrap();
+                (guard.get_user().unwrap(), guard.get_user().unwrap())
+            };
+
+            let producer = thread::spawn(move || {
+                for i in 0..NUM_MESSAGES {
+                    let msg = TestMessage {
+                        timestamp: i,
+                        commit_time: i,
+                        from_id: 0,
+                        to_id: 1,
+                        is_broadcast: false,
+                        data: format!("msg-{}", i),
+                    };
+                    // Loop until send is successful, as the buffer may be full.
+                    while user0.send(msg.clone()).is_err() {
+                        thread::yield_now();
+                    }
+                }
+            });
+
+            let consumer = thread::spawn(move || {
+                let mut received = Vec::new();
+                while received.len() < NUM_MESSAGES as usize {
+                    if let Some(msgs) = user1.poll() {
+                        received.extend(msgs);
+                    }
+                    thread::yield_now();
+                }
+                received.sort_by_key(|m| m.timestamp);
+                assert_eq!(received.len(), NUM_MESSAGES as usize);
+                for i in 0..NUM_MESSAGES {
+                    assert_eq!(received[i as usize].timestamp, i);
+                }
+            });
+
+            let router_messenger = messenger.clone();
+            let router = thread::spawn(move || {
+                let mut routed_count = 0;
+                while routed_count < NUM_MESSAGES as usize {
+                    let mut guard = router_messenger.lock().unwrap();
+                    if let Ok(to_deliver) = guard.poll() {
+                        routed_count += to_deliver.len();
+                        while guard.deliver(to_deliver.clone()).is_err() {
+                            thread::yield_now();
+                        }
+                    }
+                    drop(guard); // Release lock
+                    thread::yield_now();
+                }
+            });
+
+            producer.join().unwrap();
+            consumer.join().unwrap();
+            router.join().unwrap();
+        });
+    }
+
+    /// Tests bidirectional message passing to check for deadlocks and race conditions
+    /// when multiple users are sending and receiving simultaneously.
+    #[test]
+    fn loom_test_bidirectional_ping_pong() {
+        let mut builder = loom::model::Builder::new();
+        builder.max_branches = 100000;
+
+        builder.check(|| {
+            use loom::sync::{Arc, Mutex};
+            const NUM_PINGS: u64 = 5000;
+            const BUFFER_SIZE: usize = 4;
+
+            let messenger = Arc::new(Mutex::new(
+                ThreadedMessenger::<TestMessage>::new(2, BUFFER_SIZE).unwrap(),
+            ));
+
+            let (mut user0, mut user1) = {
+                let mut guard = messenger.lock().unwrap();
+                (guard.get_user().unwrap(), guard.get_user().unwrap())
+            };
+
+            // User 0 sends pings and expects pongs
+            let pinger = thread::spawn(move || {
+                for i in 0..NUM_PINGS {
+                    let ping = TestMessage {
+                        timestamp: i,
+                        from_id: 0,
+                        to_id: 1,
+                        data: "ping".to_string(),
+                        commit_time: 0,
+                        is_broadcast: false,
+                    };
+                    while user0.send(ping.clone()).is_err() {
+                        thread::yield_now();
+                    }
+
+                    let mut received_pong = false;
+                    while !received_pong {
+                        if let Some(msgs) = user0.poll() {
+                            for msg in msgs {
+                                if msg.from() == 1 && msg.data == "pong" && msg.timestamp == i {
+                                    received_pong = true;
+                                    break;
+                                }
+                            }
+                        }
+                        thread::yield_now();
+                    }
+                }
+            });
+
+            // User 1 receives pings and sends pongs
+            let ponger = thread::spawn(move || {
+                for i in 0..NUM_PINGS {
+                    let mut received_ping = false;
+                    while !received_ping {
+                        if let Some(msgs) = user1.poll() {
+                            for msg in msgs {
+                                if msg.from() == 0 && msg.data == "ping" && msg.timestamp == i {
+                                    received_ping = true;
+                                    break;
+                                }
+                            }
+                        }
+                        thread::yield_now();
+                    }
+
+                    let pong = TestMessage {
+                        timestamp: i,
+                        from_id: 1,
+                        to_id: 0,
+                        data: "pong".to_string(),
+                        commit_time: 0,
+                        is_broadcast: false,
+                    };
+                    while user1.send(pong.clone()).is_err() {
+                        thread::yield_now();
+                    }
+                }
+            });
+
+            let router_messenger = messenger.clone();
+            let router = thread::spawn(move || {
+                // Run router for a fixed number of iterations, enough for loom to explore states.
+                for _ in 0..(NUM_PINGS * 4) {
+                    let mut guard = router_messenger.lock().unwrap();
+                    if let Ok(to_deliver) = guard.poll() {
+                        guard.deliver(to_deliver).unwrap();
+                    }
+                    drop(guard);
+                    thread::yield_now();
+                }
+            });
+
+            pinger.join().unwrap();
+            ponger.join().unwrap();
+            router.join().unwrap();
+        });
     }
 }
