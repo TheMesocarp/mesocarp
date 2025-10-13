@@ -84,7 +84,7 @@ impl<T: Scheduleable, const SLOTS: usize, const HEIGHT: usize> Clock<T, SLOTS, H
     pub fn rotate(&mut self, overflow: &mut BinaryHeap<Reverse<T>>) {
         for k in 1..HEIGHT {
             let wheel_period = SLOTS.pow(k as u32);
-            if self.time % (wheel_period as u64) == 0 {
+            if self.time.is_multiple_of(wheel_period as u64) {
                 if HEIGHT == k {
                     for _ in 0..SLOTS.pow(HEIGHT as u32 - 1) {
                         overflow.pop().map(|event| self.insert(event.0));
