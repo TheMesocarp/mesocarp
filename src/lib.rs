@@ -5,6 +5,7 @@ use thiserror::Error;
 pub mod comms;
 pub mod logging;
 pub mod scheduling;
+pub mod record;
 
 /// Wrapper type for `std::io::Error`
 #[derive(Debug, Error)]
