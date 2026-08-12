@@ -78,7 +78,7 @@ impl<T: Message> ThreadedMessenger<T> {
                 if to != usize::MAX {
                     if to >= self.capacity {
                         return Err(MesoError::NotFound {
-                            name: format!("Target agent {to} not found"),
+                            name: format!("target agent {to}"),
                         });
                     }
                     to_write.push((to, msg));
