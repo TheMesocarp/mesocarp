@@ -1,7 +1,6 @@
 use thiserror::Error;
 
 pub mod comms;
-pub mod logging;
 pub mod scheduling;
 pub mod transient;
 
@@ -18,16 +17,10 @@ pub enum MesoError {
     TimeTravel,
     #[error("No items found!")]
     NoItems,
-    #[error("Type erased LogState pointer is null")]
-    UninitializedState,
     #[error("Not found: {name}")]
     NotFound { name: String },
     #[error("Attempted to send a `Message` to a nonexistent user.")]
     InvalidUserId,
-    #[error("Attempted to read a journal with the wrong Dtype!")]
-    JournalDtypeMismatch,
-    #[error("Attempted to add an empty record chunk to the timeline. Misleading!")]
-    PushedEmptyChunk,
     #[error("Mark points outside the current housing chunk, an arithmatic error was made.")]
     MarkOutsideHomeChunk,
     #[error("handle or restore target below the chop line; the current commit horizon fixed by the GVT.")]
