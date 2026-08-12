@@ -11,9 +11,22 @@ readme      = "README.md"
 repository  = "https://github.com/TheMesocarp/mesocarp"
 version     = "0.12.1"
 
+[features]
+# Compiles the invariant walkers (`check_invariants`, `check_lockstep`) into the
+# library so external test crates can call them. Never enable in production.
+testing = []
+
 [dependencies]
 array-init      = "2.1.0"
 bincode         = { version = "2.0.1", features = ["derive"] }
 bytemuck        = "1.23.1"
 crossbeam-queue = "0.3.2"
 thiserror       = "2.0.12"
+
+[dev-dependencies]
+criterion = "0.5"
+mesocarp = { path = ".", features = ["testing"] }
+
+[[bench]]
+harness = false
+name    = "allocation"

@@ -1,0 +1,320 @@
+# Transient Core Invariants
+
+Properties `Domain` and `Timeline<V>` (`src/transient`) must uphold regardless of which
+`Transient` object ties them together. The orchestration layer that will pair many
+timelines with one arena is not built yet; properties only that layer can uphold are
+stated here as protocol entries and marked **upheld by the caller** — they are the
+safety contracts of the module's `unsafe` entry points. Invariant ids are the reference
+points for contract review.
+
+Unit tests live in `src/transient/mod.rs::tests` (ids T-1…T-6, C-4 in source comments)
+and are meant to also run under miri: `cargo +nightly miri test transient::`.
+"Tests: none yet" marks a gap, not a non-testable property.
+
+---
+
+## Arena (`Domain`)
+
+### INV-ARENA-1 — Chunk ids are global, monotone, and FIFO-retired
+
+A chunk's id is `base + index` into the deque. `base` only advances (`release_front`,
+`reset`), so an id freed off the front can never validate again: any stale `Cursor` or
+`HighMark` naming it fails the `id >= base` gate with `BelowChopLine`. Surviving ids
+never move or get rewritten.
+
+Tests: `transient::tests::chop_frees_prefix_and_recycles` (T-1),
+`transient::tests::survivors_intact_after_chop_and_reuse` (T-2, fresh ids 3–4 after
+recycling), `transient::tests::noop_edges` (T-3),
+`transient::tests::floor_above_open_chunk_asserts` / `floor_below_base_asserts` (T-4,
+debug range asserts).
+
+### INV-ARENA-2 — LIFO ids are reused
+
+`restore` pops chunks off the back **without** advancing `base`; a later `open()`
+re-issues the same ids. So unlike the FIFO edge, numeric gates cannot detect a stale
+cursor whose chunk was popped and re-opened — a cursor captured for a rolled-back event
+can become numerically valid again while pointing at semantically different memory.
+This is why INV-PROTO-5 (cursor discard) exists.
+
+Tests: none yet.
+
+### INV-ARENA-3 — The back chunk is always standard-size
+
+The deque is either empty or its back chunk is a standard (recyclable, `std`) chunk
+that the bump pointer works into. `bump`'s oversize path immediately reopens a std
+chunk behind the exact-fit allocation; `restore` reopens when a rewind lands on an
+exact-fit chunk. Consequence: `Domain::cursor()` never names an oversize chunk, so
+every captured `Cursor` is restorable.
+
+Tests: `transient::tests::mixed_chop_dealloc_vs_recycle` (T-6, bump-side reopen only —
+the value after the oversize alloc lands in the reopened chunk). Restore-side reopen:
+none yet.
+
+### INV-ARENA-4 — The free list holds only standard chunks
+
+Every release path (`release_front`, `restore`, `reset`) recycles std chunks into
+`free` and deallocates exact-fit chunks outright, so the free list stays uniform — no
+size classes, no fit logic on reuse.
+
+Tests: `transient::tests::mixed_chop_dealloc_vs_recycle` (T-6, FIFO path). LIFO and
+reset paths: none yet.
+
+### INV-ARENA-5 — Reclamation is wholesale-only; no value is ever dropped
+
+`alloc` rejects `needs_drop` types (`MesoError::NeedsDrop`), and no release path runs
+value destructors — `release_front` / `restore` / `reset` / `Drop for Domain` free raw
+bytes only. Values must not own heap resources.
+
+Tests: none yet (`NeedsDrop` gate untested).
+
+### INV-ARENA-6 — Domain ids are process-unique and never reused
+
+Ids come from a global atomic counter, so a dropped `Domain`'s id can never be
+presented again. This makes the `ForeignDomain` gate temporally sound: every deref-ish
+entry point (`Timeline::record`, `Timeline::live_state`) requires presenting a live
+`&Domain` whose id matches the one captured at `Timeline::new`.
+
+Tests: none yet.
+
+### INV-ARENA-7 — Value addresses are stable
+
+Chunk bytes never move once allocated: the deque stores chunk headers, not the bytes,
+so deque growth, chop, rollback of *other* chunks, and free-list recycling never
+relocate a live value. A `Handle`'s pointer is valid exactly as long as its home chunk
+is unreleased.
+
+Tests: `transient::tests::survivors_intact_after_chop_and_reuse` (T-2, survivors
+re-read after chop and after recycled chunks are rewritten).
+
+### INV-ARENA-8 — Offsets and ids fit `u32`
+
+`chunk_size` is rounded up to `CHUNK_ALIGN` (16) and must land in `[16, u32::MAX]` —
+`Domain::new` asserts both — because offsets travel as `u32` in `bump` and `Cursor`.
+Documented limit: a single `Domain` can issue at most ~2³² chunk ids over its lifetime;
+debug builds panic on overflow, release builds would wrap and break INV-ARENA-1.
+
+Tests: `transient::tests::new_rejects_chunk_size_above_u32` (C-4, upper bound). Zero
+`chunk_size` panic: none yet.
+
+---
+
+## Index (`Timeline<V>`)
+
+Index chunks live on the regular heap (`Box<[MaybeUninit<Record<V>>]>`), not in the
+arena — the timeline stores `(Stamp, Handle<V>)` records; only the values live in the
+`Domain`. `std_chunk_size` counts record **slots**; `Domain::new`'s `chunk_size`
+counts **bytes**.
+
+### INV-INDEX-1 — Every index chunk holds at least one record
+
+`record` only pushes chunks it immediately writes into; `partial_rollback` pops
+wholly-dead chunks before truncating (its survivor `expect` relies on this), and
+`partial_chop`'s compaction keeps ≥ 1 record (its `records()[0]` relies on this). No
+code path leaves an empty chunk in the deque.
+
+Tests: none yet.
+
+### INV-INDEX-2 — Records are strictly stamp-ordered
+
+`record` rejects `stamp <= latest` (`TimestampMonotonicityFailure`), so records are
+strictly increasing within and across chunks, the deque is ordered by each chunk's
+`lo` (first record's stamp; empty chunks reset `lo` to the max sentinel so they sort
+last), and every `partition_point` / `lo`-skip loop in the partials is sound.
+Granularity note: ordering is `(time, seq)`, but `partial_rollback` and `partial_chop`
+cut on `time` only — `seq` breaks append ties, never reclamation boundaries.
+
+Tests: none yet.
+
+### INV-INDEX-3 — `latest` mirrors the newest record
+
+`latest` equals the stamp of the newest record and is `None` iff the timeline is
+empty. `record` sets it, `partial_rollback` rewinds it to the survivor (or clears it).
+
+Tests: none yet.
+
+### INV-INDEX-4 — Seal means closed-to-appends, and the partials may unseal
+
+A chunk seals when it fills or when it is superseded as the back chunk
+(`fetch_fresh_chunk`). Both partials recompute `seal = full()` on the boundary chunk,
+deliberately re-opening a truncated back chunk (rollback) or a compacted single-chunk
+front (chop) so subsequent `record` calls refill it instead of fetching a fresh chunk.
+This refill path is what lets the allocator amortize across rollback cycles.
+
+Tests: none yet.
+
+### INV-INDEX-5 — Value-before-index write order
+
+`record` arena-allocates the value before touching the index. An error between the
+two (currently unreachable — the index path is infallible once `Timeline::new` has
+rejected zero slots) would leave a ghost value owned by no record, reclaimed only
+wholesale by a later rollback or chop.
+
+Tests: N/A — documentation entry.
+
+### INV-INDEX-6 — A timeline is bound to exactly one domain
+
+`Timeline::new` captures the domain id; `record` and `live_state` gate on it
+(`ForeignDomain`). Combined with INV-ARENA-6, a timeline can never deref through the
+wrong (or a dead) arena via the safe-facing API.
+
+Tests: none yet.
+
+---
+
+## Commit horizon & rollback legality
+
+### INV-HORIZON-1 — The horizon is monotone and set by chop
+
+`commit_horizon` starts at 0 (encoding GVT₀ = 0) and is only raised:
+`partial_chop(until)` sets it to `max(commit_horizon, until)`, so out-of-order chop
+calls cannot lower it.
+
+**Known deviation:** `partial_chop` on an *empty* timeline returns early and skips the
+update, so an unseeded or emptied timeline chopped in a sweep keeps a stale horizon
+and will accept a rollback its siblings reject. Pending decision: hoist the update
+above the early return.
+
+Tests: none yet.
+
+### INV-HORIZON-2 — Rollback strictly above the horizon
+
+`partial_rollback(to)` errors when `to <= commit_horizon`, before any mutation — a
+rejected rollback leaves the timeline byte-for-byte unchanged, so a sweep that fails
+on one timeline has not half-applied it.
+
+Naming note: the gate currently returns `PastTheHorizon`, whose message describes the
+future direction; `BelowChopLine`'s message ("below the chop line; the current commit
+horizon fixed by the GVT") is the semantic match. Variant choice pending.
+
+Tests: none yet.
+
+### INV-HORIZON-3 — Chop keeps the at-or-before survivor
+
+After `partial_chop(until)`, the oldest retained record is the *newest* record with
+`time <= until` when one exists (the off-by-one that preserves restoration state), and
+the returned floor is that record's home chunk. Together with INV-HORIZON-2, a legal
+rollback (`to > horizon >= survivor.time`) can never empty a seeded timeline.
+
+Tests: none yet.
+
+### INV-HORIZON-4 — Records strictly above the horizon (proposal)
+
+`record` should reject `stamp.time <= commit_horizon` unless the timeline is empty —
+the seed exception, which is also what permits mid-run object creation
+(INV-BOOT-3). Not enforced today: only the `latest` gate stands, and after a
+rollback-to-empty `latest` is `None`, so nothing prevents writing committed history.
+Mirror of INV-HORIZON-2 on the write side.
+
+Tests: none yet (blocked on adoption).
+
+---
+
+## Cross-object protocol (Timeline ⇄ Domain)
+
+These are the safety contracts of the `unsafe` entry points, **upheld by the caller**
+(the future orchestration layer), stated here so they have stable ids.
+
+### INV-PROTO-1 — Single writer, stamp-ordered arena
+
+One `Domain` per LP, single writer. Between rollbacks, arena allocation order across
+*all* timelines sharing the domain is stamp-nondecreasing. This makes liveness a
+prefix/suffix property of the chunk sequence — the premise of both wholesale
+reclamation directions (`release_front` off the front, `restore` off the back).
+Nothing in the module enforces cross-timeline ordering.
+
+Tests: N/A — documentation entry (upheld by the caller).
+
+### INV-PROTO-2 — Rollback sweep takes the max of marks
+
+A rollback runs `partial_rollback` on **every** timeline sharing the domain, then
+rewinds the domain once, to the *maximum* `HighMark`, ordered by chunk id then end
+address — any single timeline's mark may sit below a sibling's surviving value, and
+rewinding to it alone frees that survivor. `Ok(None)` from **all** timelines is the
+only license for `Domain::reset`. `HighMark.end` is one-past-end of the survivor's
+value, excluding alignment padding (sound: the next `bump` re-aligns).
+
+Tests: none yet.
+
+### INV-PROTO-3 — Chop sweep takes the min of floors
+
+A chop runs `partial_chop` on every timeline and calls `release_front` at the
+*minimum* returned floor; empty timelines (`None`) constrain nothing. `keep_from` must
+be a liveness floor: no live `Handle` and no restorable `Cursor` may name a chunk
+below it.
+
+Tests: `release_front` mechanics under T-1 / T-3 / T-4; the sweep composition itself:
+none yet.
+
+### INV-PROTO-4 — Reads require lockstep
+
+`live_state` is sound iff the domain has not been rewound below the timeline's newest
+surviving record nor chopped above its floor — the id gate cannot see a protocol
+violation that already happened. While the returned `&V` lives, the shared `&Domain`
+borrow blocks every arena mutation (`alloc`, `restore`, `release_front`, `reset`);
+timeline-side partials may still run but only edit the heap index, so the worst
+in-borrow outcome is a stale-but-valid read, never a dangling one.
+
+Tests: none yet (miri target).
+
+### INV-PROTO-5 — Cursors of undone events are dead
+
+After a rollback, every `Cursor` captured for a rolled-back event must be discarded
+and re-captured on re-execution. Because of INV-ARENA-2, such a cursor can become
+numerically valid again once re-execution regrows the arena — `restore`'s range gates
+cannot detect it, and applying it silently corrupts the bump position.
+
+Tests: none yet.
+
+### INV-PROTO-6 — Cross-domain marks are only probabilistically gated (known gap)
+
+`Cursor` carries no domain id: `restore` cannot distinguish a foreign domain's cursor
+that happens to be numerically in range. `HighMark` fares better — `cursor_at`'s
+containment check (`MarkOutsideHomeChunk`) almost certainly rejects a foreign pointer
+— but neither is a soundness gate. Applying either across domains is a contract
+violation. Candidate hardening: stamp the domain id into `Cursor` and gate like
+`ForeignDomain`.
+
+Tests: none yet.
+
+---
+
+## Bootstrap & lifecycle
+
+### INV-BOOT-1 — Seed before events
+
+Every timeline writes its baseline record at the initial GVT (time 0) before any
+event executes. Under INV-HORIZON-2/3, the baseline — or a newer committed record —
+survives every legal operation thereafter: `live_state` never reverts to `None`
+post-seed, and `reset` is unreachable on the runtime path.
+
+Tests: none yet.
+
+### INV-BOOT-2 — GVT flows in via chop; rollback legality derives from it
+
+The orchestration teaches each timeline the commit floor by calling
+`partial_chop(gvt)` as GVT advances, and only issues rollbacks strictly above GVT
+(the Time Warp property: stragglers and anti-messages are above GVT by definition).
+INV-HORIZON-2 is the local, per-timeline enforcement of this global invariant — a
+rollback at or below GVT is a bug in the caller and now fails loudly instead of
+silently vaporizing committed state.
+
+Tests: none yet.
+
+### INV-BOOT-3 — Mid-run creation is rollbackable
+
+A timeline created mid-run is seeded at its creation time `t`, not at GVT. A rollback
+below `t` legitimately empties it (`Ok(None)` while siblings return marks — the mixed
+case of INV-PROTO-2). This is only correct because object creation is itself an
+event: undoing it must re-seed or drop the timeline.
+
+Tests: none yet.
+
+### INV-BOOT-4 — The two full-reset paths are distinct
+
+Restoring a cursor captured at bootstrap (`{base, 0}`) preserves `base`: earlier
+cursors stay valid and the arena can be re-seeded in place. `Domain::reset` advances
+`base` past every chunk: all prior cursors and handle ids retire permanently
+(`BelowChopLine` thereafter). `reset` is the teardown/recycle path, not part of
+runtime rollback; the runtime path is sweep → max mark → `rewind` (INV-PROTO-2).
+
+Tests: none yet.
