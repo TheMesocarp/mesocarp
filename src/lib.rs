@@ -27,6 +27,8 @@ pub enum MesoError {
     BelowChopLine,
     #[error("Initialized data structure with no slots.")]
     InitializedWithNoSlots,
+    #[error("chunk_size does not fit u32 offsets after alignment rounding.")]
+    ChunkSizeTooLarge,
     #[error(
         "The timestamps of writes must always be monotonically increasing between rollback events"
     )]

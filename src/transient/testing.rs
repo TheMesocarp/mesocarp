@@ -1,8 +1,11 @@
 //! Structural invariant walkers, compiled only under `cfg(test)` or the
-//! `testing` feature — never in production builds. Each walker panics on the
-//! first violation, citing the invariant id from `docs/invariants.md`, so any
-//! test tier (unit, integration, future state machine) can call it after a
-//! mutation and turn a silent structural corruption into a loud failure.
+//! `testing` feature — never in production builds (the tokio `test-util`
+//! pattern: the feature exists for this repo's own test suites, enabled via
+//! the self dev-dependency; don't enable it downstream). Each walker panics on
+//! the first violation, citing the invariant id from
+//! `docs/transient/invariants.md`, so any test tier (unit, integration, future
+//! state machine) can call it after a mutation and turn a silent structural
+//! corruption into a loud failure.
 
 use super::{Domain, Timeline};
 
@@ -34,6 +37,11 @@ impl Domain {
             self.base as u64 + self.chunks.len() as u64 <= u32::MAX as u64 + 1,
             "INV-ARENA-8: chunk ids must fit u32"
         );
+    }
+
+    /// Gross arena shape for unit assertions: `(base, live chunks, free chunks)`.
+    pub fn shape(&self) -> (u32, usize, usize) {
+        (self.base, self.chunks.len(), self.free.len())
     }
 }
 

@@ -12,8 +12,9 @@ repository  = "https://github.com/TheMesocarp/mesocarp"
 version     = "0.12.1"
 
 [features]
-# Compiles the invariant walkers (`check_invariants`, `check_lockstep`) into the
-# library so external test crates can call them. Never enable in production.
+# Compiles the invariant walkers (`check_invariants`, `check_lockstep`, `shape`)
+# into the library so this repo's external test crates can call them — the
+# tokio `test-util` pattern. Never enable in production.
 testing = []
 
 [dependencies]

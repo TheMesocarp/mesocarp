@@ -1,13 +1,16 @@
 //! Bootstrap and teardown lifecycle flows (INV-BOOT-1, -2, -4): pre-seed
 //! reads, seed protection under the commit horizon, rollback to
 //! just-after-bootstrap, and domain teardown/reuse via `reset`.
+//!
+//! Known-missing variants: mid-run timeline creation and rollback below its
+//! seed (INV-BOOT-3) — blocked on the object-creation-as-event story.
 
 use crate::common::stamp;
 use mesocarp::transient::{Cursor, Domain, Timeline};
 
 #[test]
-fn seed_protection_and_pre_seed_reads() {
-    let mut d = Domain::new(64);
+fn test_e2e_bootstrap_seed_protection() {
+    let mut d = Domain::new(64).unwrap();
     let mut tl: Timeline<u64> = Timeline::new(4, &d).unwrap();
 
     // Pre-seed: no state, no floor — and rollback-to-zero is already illegal,
@@ -17,16 +20,16 @@ fn seed_protection_and_pre_seed_reads() {
     assert!(tl.partial_rollback(0).is_err());
 
     // Seed at GVT₀, then run events.
-    tl.record(&mut d, 7, stamp(0, 0)).unwrap();
-    tl.record(&mut d, 8, stamp(1, 0)).unwrap();
-    tl.record(&mut d, 9, stamp(2, 0)).unwrap();
+    tl.record(&mut d, 7, stamp(1, 0)).unwrap();
+    tl.record(&mut d, 8, stamp(2, 0)).unwrap();
+    tl.record(&mut d, 9, stamp(3, 0)).unwrap();
     tl.check_invariants();
 
     // INV-BOOT-1: the baseline is un-rollbackable...
     assert!(tl.partial_rollback(0).is_err());
 
     // ...while rolling back to just-after-bootstrap keeps exactly the seed.
-    let mark = tl.partial_rollback(1).unwrap().expect("seed survives");
+    let mark = tl.partial_rollback(2).unwrap().expect("seed survives");
     unsafe { d.rewind(mark).unwrap() };
     tl.check_invariants();
     tl.check_lockstep(&d);
@@ -34,8 +37,8 @@ fn seed_protection_and_pre_seed_reads() {
 }
 
 #[test]
-fn teardown_and_domain_reuse() {
-    let mut d = Domain::new(64);
+fn test_e2e_bootstrap_teardown_and_reuse() {
+    let mut d = Domain::new(64).unwrap();
     let c0 = d.cursor();
     assert_eq!(
         c0,

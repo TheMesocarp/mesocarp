@@ -17,8 +17,6 @@
 pub mod ds;
 #[cfg(any(test, feature = "testing"))]
 mod testing;
-#[cfg(test)]
-mod tests;
 
 use std::alloc::{alloc, dealloc, handle_alloc_error, Layout};
 use std::cmp::max;
@@ -167,7 +165,7 @@ pub struct Timeline<V> {
     latest: Option<Stamp>,
     std_chunk_size: usize,
     domain_id: usize,
-    commit_horizon: u64
+    commit_horizon: Option<u64>
 }
 
 impl<V> Timeline<V> {
@@ -181,7 +179,7 @@ impl<V> Timeline<V> {
             free: Vec::new(),
             latest: None,
             std_chunk_size,
-            commit_horizon: 0,
+            commit_horizon: None,
         })
     }
 
@@ -224,6 +222,11 @@ impl<V> Timeline<V> {
         if d.id != self.domain_id {
             return Err(MesoError::ForeignDomain);
         }
+        if let Some(t) = self.commit_horizon {
+            if stamp.time <= t {
+                return Err(MesoError::TimeTravel);
+            }
+        }
         if let Some(l) = self.latest {
             if stamp <= l {
                 return Err(MesoError::TimestampMonotonicityFailure);
@@ -251,7 +254,11 @@ impl<V> Timeline<V> {
 
     /// Rollback hook for this timeline: discard every record of type V with `stamp.time >= to`.
     pub fn partial_rollback(&mut self, to: u64) -> Result<Option<HighMark>, MesoError> {
-        if to <= self.commit_horizon { return Err(MesoError::PastTheHorizon) }
+        if let Some(t) = self.commit_horizon { 
+            if to <= t {
+                return Err(MesoError::PastTheHorizon) 
+            }
+        }
         // Recycle wholly-invalid chunks off the back
         while self.chunks.back().is_some_and(|c| c.lo.time >= to) {
             let mut dead = self.chunks.pop_back().unwrap();
@@ -270,7 +277,7 @@ impl<V> Timeline<V> {
         let last = *back.records().last().expect("lo.time < to ⇒ keep ≥ 1");
         self.latest = Some(last.stamp);
         let end = unsafe {
-            NonNull::new_unchecked(last.value.ptr.as_ptr().cast::<u8>().add(size_of::<V>()))
+            NonNull::new_unchecked(last.value.ptr.as_ptr().cast::<u8>().wrapping_add(size_of::<V>()))
         };
         Ok(Some(HighMark {
             chunk: last.value.home_chunk,
@@ -280,6 +287,11 @@ impl<V> Timeline<V> {
 
     /// Chop hook for this timeline: retire history superseded at or before `until`
     pub fn partial_chop(&mut self, until: u64) -> Option<u32> {
+        let mut update_horizon = until;
+        if let Some(t) = self.commit_horizon {
+            update_horizon = max(t, until);
+        }
+        self.commit_horizon = Some(update_horizon);
         // A front chunk is wholly superseded iff the next chunk already opens
         // at or before `until`
         while self.chunks.get(1).is_some_and(|next| next.lo.time <= until) {
@@ -299,8 +311,6 @@ impl<V> Timeline<V> {
             front.lo = front.records()[0].stamp;
             front.seal = front.full();
         }
-
-        self.commit_horizon = max(self.commit_horizon, until);
 
         let floor = front.records().first().map(|r| r.value.home_chunk);
         floor
@@ -340,23 +350,27 @@ pub struct Domain {
 }
 
 impl Domain {
-    pub fn new(chunk_size: usize) -> Self {
-        let id = NEXT_DOMAIN.fetch_add(1, Ordering::Relaxed);
+    /// Arena over `chunk_size`-byte chunks (rounded up to `CHUNK_ALIGN`).
+    /// Rejects zero (`InitializedWithNoSlots`) and sizes whose aligned value
+    /// exceeds `u32::MAX` (`ChunkSizeTooLarge`) — offsets travel as `u32`.
+    pub fn new(chunk_size: usize) -> Result<Self, MesoError> {
+        if chunk_size == 0 {
+            return Err(MesoError::InitializedWithNoSlots);
+        }
         let chunk_size = (chunk_size + CHUNK_ALIGN - 1) & !(CHUNK_ALIGN - 1);
-        assert!(chunk_size >= CHUNK_ALIGN);
         // Offsets travel as u32 in `bump` returns and `Cursor`.
-        assert!(
-            chunk_size <= u32::MAX as usize,
-            "chunk_size must fit u32 offsets"
-        );
-        Self {
+        if chunk_size > u32::MAX as usize {
+            return Err(MesoError::ChunkSizeTooLarge);
+        }
+        let id = NEXT_DOMAIN.fetch_add(1, Ordering::Relaxed);
+        Ok(Self {
             chunks: VecDeque::new(),
             base: 0,
             free: Vec::new(),
             cursor: 0,
             chunk_size,
             id,
-        }
+        })
     }
 
     /// Current bump position. Capture before an event runs.

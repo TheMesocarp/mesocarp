@@ -9,7 +9,7 @@ fn append_throughput(c: &mut Criterion) {
     c.bench_function("record_1k_appends", |b| {
         b.iter_batched(
             || {
-                let d = Domain::new(4096);
+                let d = Domain::new(4096).unwrap();
                 let tl = Timeline::<u64>::new(512, &d).unwrap();
                 (d, tl)
             },
@@ -25,7 +25,7 @@ fn append_throughput(c: &mut Criterion) {
 }
 
 fn speculate_rollback_cycle(c: &mut Criterion) {
-    let mut d = Domain::new(4096);
+    let mut d = Domain::new(4096).unwrap();
     let mut tl = Timeline::<u64>::new(512, &d).unwrap();
     tl.record(&mut d, 0, Stamp { time: 0, seq: 0 }).unwrap();
 

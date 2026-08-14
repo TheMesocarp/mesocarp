@@ -2,11 +2,21 @@
 //! by `main.rs` and reached as `crate::common` from each suite.
 //!
 //! The fold helpers encode the sweep halves of the cross-object protocol
-//! (INV-PROTO-2 / INV-PROTO-3 in `docs/invariants.md`) until the real
+//! (INV-PROTO-2 / INV-PROTO-3 in `docs/transient/invariants.md`) until the real
 //! orchestration layer owns them.
 #![allow(dead_code)]
 
-use mesocarp::transient::{HighMark, Stamp};
+use mesocarp::transient::{Domain, Handle, HighMark, Stamp};
+
+/// 64-byte chunks: exactly eight u64 slots each.
+pub const CS: usize = 64;
+
+/// Domain over `CS`-byte chunks with `n` sequential u64s allocated (8 per chunk).
+pub fn filled(n: u64) -> (Domain, Vec<Handle<u64>>) {
+    let mut d = Domain::new(CS).unwrap();
+    let hs = (0..n).map(|i| d.alloc(i).unwrap()).collect();
+    (d, hs)
+}
 
 pub fn stamp(time: u64, seq: u32) -> Stamp {
     Stamp { time, seq }

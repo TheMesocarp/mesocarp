@@ -14,8 +14,8 @@ const CHUNK_BYTES: usize = 64;
 const INDEX_SLOTS: usize = 4;
 
 #[test]
-fn speculate_rollback_reexecute_chop_round() {
-    let mut d = Domain::new(CHUNK_BYTES);
+fn test_e2e_timewarp_straggler_rollback_round() {
+    let mut d = Domain::new(CHUNK_BYTES).unwrap();
     let mut counts: Timeline<u64> = Timeline::new(INDEX_SLOTS, &d).unwrap();
     let mut states: Timeline<[u64; 4]> = Timeline::new(INDEX_SLOTS, &d).unwrap();
 
