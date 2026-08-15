@@ -1,13 +1,13 @@
-# Transient Core Invariants
+# State Management Core Invariants
 
-Properties `Domain` and `Timeline<V>` (`src/transient`) must uphold regardless of which
+Properties `Domain` and `CopyTimeline<V>` (`src/state_management`) must uphold regardless of which
 `Transient` object ties them together. The orchestration layer that will pair many
 timelines with one arena is not built yet; properties only that layer can uphold are
 stated here as protocol entries and marked **upheld by the caller** — they are the
 safety contracts of the module's `unsafe` entry points. Invariant ids are the reference
 points for contract review.
 
-All transient suites live in `tests/transient/` (unit, invariant, and e2e files per
+All `state_management` suites live in `tests/state_management/` (unit, invariant, and e2e files per
 `skills/TEST.md`) and are meant to also run under miri:
 `cargo +nightly miri test --test transient`.
 "Tests: none yet" marks a gap, not a non-testable property.
@@ -23,7 +23,7 @@ A chunk's id is `base + index` into the deque. `base` only advances (`release_fr
 `HighMark` naming it fails the `id >= base` gate with `BelowChopLine`. Surviving ids
 never move or get rewritten.
 
-Tests: `tests/transient/release_front.rs::test_releaseFront_UpdatesBaseAndFreeList`,
+Tests: `tests/state_management/release_front.rs::test_releaseFront_UpdatesBaseAndFreeList`,
 `…test_releaseFront_PreservesSurvivorValues` (fresh ids 3–4 after recycling),
 `…test_releaseFront_NoopAtBaseAndEmptyEdges`,
 `…test_releaseFront_PanicsWhenFloorAboveOpenChunk` / `…WhenFloorBelowBase` (debug
@@ -37,7 +37,7 @@ cursor whose chunk was popped and re-opened — a cursor captured for a rolled-b
 can become numerically valid again while pointing at semantically different memory.
 This is why INV-PROTO-5 (cursor discard) exists.
 
-Tests: `tests/transient/invariants.rs::arena::test_inv_arena_2_stale_cursor_revalidates_after_id_reuse`
+Tests: `tests/state_management/invariants.rs::arena::test_inv_arena_2_stale_cursor_revalidates_after_id_reuse`
 (the popped→regrown gate transition and physical byte reuse),
 `…test_inv_arena_2_restore_reuses_where_reset_retires` (the ARENA-1 asymmetry),
 `…test_inv_arena_2_oversize_lifo_dealloc_still_reissues_id`,
@@ -53,7 +53,7 @@ chunk behind the exact-fit allocation; `restore` reopens when a rewind lands on 
 exact-fit chunk. Consequence: `Domain::cursor()` never names an oversize chunk, so
 every captured `Cursor` is restorable.
 
-Tests: `tests/transient/release_front.rs::test_releaseFront_DeallocsOversizeRecyclesStd`
+Tests: `tests/state_management/release_front.rs::test_releaseFront_DeallocsOversizeRecyclesStd`
 (bump-side reopen only — the value after the oversize alloc lands in the reopened
 chunk). Restore-side reopen: none yet.
 
@@ -63,9 +63,9 @@ Every release path (`release_front`, `restore`, `reset`) recycles std chunks int
 `free` and deallocates exact-fit chunks outright, so the free list stays uniform — no
 size classes, no fit logic on reuse.
 
-Tests: `tests/transient/release_front.rs::test_releaseFront_DeallocsOversizeRecyclesStd`
+Tests: `tests/state_management/release_front.rs::test_releaseFront_DeallocsOversizeRecyclesStd`
 (FIFO path);
-`tests/transient/invariants.rs::arena::test_inv_arena_2_oversize_lifo_dealloc_still_reissues_id`
+`tests/state_management/invariants.rs::arena::test_inv_arena_2_oversize_lifo_dealloc_still_reissues_id`
 (LIFO path); reset path walked by `check_invariants` in
 `…test_inv_arena_5_release_paths_free_bytes_only`.
 
@@ -75,7 +75,7 @@ Tests: `tests/transient/release_front.rs::test_releaseFront_DeallocsOversizeRecy
 value destructors — `release_front` / `restore` / `reset` / `Drop for Domain` free raw
 bytes only. Values must not own heap resources.
 
-Tests: `tests/transient/invariants.rs::arena::test_inv_arena_5_needs_drop_rejected_at_alloc`
+Tests: `tests/state_management/invariants.rs::arena::test_inv_arena_5_needs_drop_rejected_at_alloc`
 (direct gate, incl. the oversize-droppy ordering), `…rejected_at_record` (indirect
 gate; also pins that `Timeline::<Droppy>::new` succeeds — the gate is per-alloc),
 `…test_inv_arena_5_gate_is_exactly_needs_drop` (`MaybeUninit<String>`, ZST),
@@ -90,7 +90,7 @@ presented again. This makes the `ForeignDomain` gate temporally sound: every der
 entry point (`Timeline::record`, `Timeline::live_state`) requires presenting a live
 `&Domain` whose id matches the one captured at `Timeline::new`.
 
-Tests: `tests/transient/invariants.rs::arena::test_inv_arena_6_foreign_domain_gated_on_every_deref_entry`
+Tests: `tests/state_management/invariants.rs::arena::test_inv_arena_6_foreign_domain_gated_on_every_deref_entry`
 (pairwise gate, self-pairs pass, rejection mutates nothing),
 `…test_inv_arena_6_dropped_domain_id_never_returns` (temporal closure; under miri also
 proves the id check fires before any dangling deref),
@@ -109,7 +109,7 @@ so deque growth, chop, rollback of *other* chunks, and free-list recycling never
 relocate a live value. A `Handle`'s pointer is valid exactly as long as its home chunk
 is unreleased.
 
-Tests: `tests/transient/release_front.rs::test_releaseFront_PreservesSurvivorValues`
+Tests: `tests/state_management/release_front.rs::test_releaseFront_PreservesSurvivorValues`
 (survivors re-read after chop and after recycled chunks are rewritten).
 
 ### INV-ARENA-8 — Offsets and ids fit `u32`
@@ -121,7 +121,7 @@ Tests: `tests/transient/release_front.rs::test_releaseFront_PreservesSurvivorVal
 Documented limit: a single `Domain` can issue at most ~2³² chunk ids over its lifetime;
 debug builds panic on overflow, release builds would wrap and break INV-ARENA-1.
 
-Tests: `tests/transient/init.rs::test_domainNew_RevertsWhenChunkSizeTooLarge` (upper
+Tests: `tests/state_management/init.rs::test_domainNew_RevertsWhenChunkSizeTooLarge` (upper
 bound), `…test_domainNew_RevertsWhenInitializedWithNoSlots` (zero).
 
 ---
@@ -219,8 +219,8 @@ message "below the chop line; the current commit horizon fixed by the GVT" is th
 semantic match for the rollback case). The vocabulary should be settled across the
 trio at once. Variant choice pending.
 
-Tests: flow coverage in `tests/transient/timewarp.rs::test_e2e_timewarp_straggler_rollback_round`
-(post-chop rollback gates) and `tests/transient/bootstrap.rs::test_e2e_bootstrap_seed_protection`
+Tests: flow coverage in `tests/state_management/timewarp.rs::test_e2e_timewarp_straggler_rollback_round`
+(post-chop rollback gates) and `tests/state_management/bootstrap.rs::test_e2e_bootstrap_seed_protection`
 (the gate flips at the arming chop — legal rollback-to-0 before, rejected after);
 direct pin: none yet.
 
@@ -281,7 +281,7 @@ legal flow that produces this license; once every timeline is armed and committe
 all-`None` is unreachable on compliant flows. `HighMark.end` is one-past-end of the
 survivor's value, excluding alignment padding (sound: the next `bump` re-aligns).
 
-Tests: flow coverage in `tests/transient/timewarp.rs::test_e2e_timewarp_straggler_rollback_round`
+Tests: flow coverage in `tests/state_management/timewarp.rs::test_e2e_timewarp_straggler_rollback_round`
 (max-of-marks sweep via `common::fold_marks`); direct pin: none yet.
 
 ### INV-PROTO-3 — Chop sweep takes the min of floors
@@ -291,9 +291,9 @@ A chop runs `partial_chop` on every timeline and calls `release_front` at the
 be a liveness floor: no live `Handle` and no restorable `Cursor` may name a chunk
 below it.
 
-Tests: `release_front` mechanics under `tests/transient/release_front.rs`; sweep
+Tests: `release_front` mechanics under `tests/state_management/release_front.rs`; sweep
 composition: flow coverage in
-`tests/transient/timewarp.rs::test_e2e_timewarp_straggler_rollback_round`
+`tests/state_management/timewarp.rs::test_e2e_timewarp_straggler_rollback_round`
 (min-of-floors via `common::min_floor`); direct pin: none yet.
 
 ### INV-PROTO-4 — Reads require lockstep
@@ -346,8 +346,8 @@ arming sweep can never seed at-or-below the swept GVT (`TimeTravel`, INV-HORIZON
 sharp edge). The protocol is uniform across start times — checkpoint restore at
 GVT = g is the same seed-then-arm sequence at g; time 0 is not a special case.
 
-Tests: flow coverage in `tests/transient/timewarp.rs::test_e2e_timewarp_straggler_rollback_round`
-(both timelines seeded at GVT₀) and `tests/transient/bootstrap.rs::test_e2e_bootstrap_seed_protection`
+Tests: flow coverage in `tests/state_management/timewarp.rs::test_e2e_timewarp_straggler_rollback_round`
+(both timelines seeded at GVT₀) and `tests/state_management/bootstrap.rs::test_e2e_bootstrap_seed_protection`
 (baseline protection from the arming sweep onward); direct pin: none yet.
 
 ### INV-BOOT-2 — GVT flows in via chop; rollback legality derives from it
@@ -362,7 +362,7 @@ GVT is a bug in the caller and fails loudly *once armed*; pre-arming, the timeli
 knows no GVT and legality rests entirely on the caller, a window the mandatory arming
 sweep closes.
 
-Tests: flow coverage in `tests/transient/timewarp.rs::test_e2e_timewarp_straggler_rollback_round`
+Tests: flow coverage in `tests/state_management/timewarp.rs::test_e2e_timewarp_straggler_rollback_round`
 (chop teaches the floor; rollback legality flips at GVT); direct pin: none yet.
 
 ### INV-BOOT-3 — Mid-run creation is rollbackable
@@ -390,7 +390,7 @@ legal on every timeline and returns `Ok(None)` from all, which is precisely the
 INV-PROTO-2 license for `Domain::reset`. Its window is pre-arming only; the first
 commit closes it permanently.
 
-Tests: flow coverage in `tests/transient/bootstrap.rs::test_e2e_bootstrap_teardown_and_reuse`
+Tests: flow coverage in `tests/state_management/bootstrap.rs::test_e2e_bootstrap_teardown_and_reuse`
 (reset path); the restore-preserves-`base` half under
-`tests/transient/invariants.rs::arena::test_inv_arena_2_restore_reuses_where_reset_retires`;
+`tests/state_management/invariants.rs::arena::test_inv_arena_2_restore_reuses_where_reset_retires`;
 direct pin: none yet.
