@@ -111,7 +111,7 @@ unsafe { d.rewind(mark)? };
 // GVT reaches 3: sweep chops, release at the MIN floor (INV-PROTO-3).
 let floors = [hp.partial_chop(3), pos.partial_chop(3)];
 if let Some(floor) = floors.into_iter().flatten().min() {
-    unsafe { d.release_front(floor) };
+    unsafe { d.release_front(floor)? };
 }
 
 // Newest surviving state; the borrow of `d` pins the arena while it lives.

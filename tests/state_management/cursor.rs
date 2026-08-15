@@ -7,11 +7,13 @@ use mesocarp::state_management::{Cursor, Domain};
 #[test]
 fn test_cursor_UpdatesChunkAndOffset() {
     let mut d = Domain::new(CS).unwrap();
+    let id = d.id();
     assert_eq!(
         d.cursor(),
         Cursor {
             chunk: 0,
-            offset: 0
+            offset: 0,
+            d_id: id
         }
     );
     d.alloc(7u64).unwrap();
@@ -19,7 +21,8 @@ fn test_cursor_UpdatesChunkAndOffset() {
         d.cursor(),
         Cursor {
             chunk: 0,
-            offset: 8
+            offset: 8,
+            d_id: id
         }
     );
     for i in 0..8u64 {
@@ -29,7 +32,8 @@ fn test_cursor_UpdatesChunkAndOffset() {
         d.cursor(),
         Cursor {
             chunk: 1,
-            offset: 8
+            offset: 8,
+            d_id: id
         }
     );
 }

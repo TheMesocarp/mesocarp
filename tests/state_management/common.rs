@@ -6,7 +6,7 @@
 //! orchestration layer owns them.
 #![allow(dead_code)]
 
-use mesocarp::state_management::{Domain, Handle, HighMark, Stamp};
+use mesocarp::state_management::{Cursor, Domain, Handle, Stamp};
 
 /// 64-byte chunks: exactly eight u64 slots each.
 pub const CS: usize = 64;
@@ -22,19 +22,10 @@ pub fn stamp(time: u64, seq: u32) -> Stamp {
     Stamp { time, seq }
 }
 
-/// INV-PROTO-2 comparator: marks order by home chunk id, then end address.
-pub fn max_mark(a: HighMark, b: HighMark) -> HighMark {
-    if (b.chunk, b.end.as_ptr() as usize) > (a.chunk, a.end.as_ptr() as usize) {
-        b
-    } else {
-        a
-    }
-}
-
-/// Fold per-timeline rollback marks into the single domain rewind target.
-/// `None` means every timeline emptied — the only license for `Domain::reset`.
-pub fn fold_marks(marks: impl IntoIterator<Item = Option<HighMark>>) -> Option<HighMark> {
-    marks.into_iter().flatten().reduce(max_mark)
+/// Fold per-timeline rollback marks into the single rewind target (INV-PROTO-2).
+/// Empty timelines contribute `None`; all-`None` licenses `Domain::reset`.
+pub fn fold_marks(marks: impl IntoIterator<Item = Option<Cursor>>) -> Option<Cursor> {
+    marks.into_iter().flatten().max()
 }
 
 /// Fold per-timeline chop floors into the single release floor (INV-PROTO-3).

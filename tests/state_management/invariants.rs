@@ -98,7 +98,8 @@ mod arena {
             d.cursor(),
             Cursor {
                 chunk: 3,
-                offset: 0
+                offset: 0,
+                d_id: d.id()
             }
         );
         assert_eq!(d.alloc(0u64).unwrap().chunk(), 3); // id 3: RETIRED past 0..=2
@@ -107,6 +108,7 @@ mod arena {
                 d.restore(Cursor {
                     chunk: 0,
                     offset: 0,
+                    d_id: d.id(),
                 })
             }
             .unwrap_err(),
@@ -152,6 +154,7 @@ mod arena {
             d.restore(Cursor {
                 chunk: 0,
                 offset: 60,
+                d_id: d.id(),
             })
             .unwrap()
         };
@@ -159,7 +162,8 @@ mod arena {
             d.cursor(),
             Cursor {
                 chunk: 0,
-                offset: 60
+                offset: 60,
+                d_id: d.id()
             }
         );
         // 60 aligns to 64; 64 + 8 exceeds the chunk, so allocation rolls
@@ -282,7 +286,7 @@ mod arena {
         let tail = d.alloc(99u64).unwrap(); // chunk 4
 
         // FIFO: chunks 0 and 1 recycle to the free list.
-        unsafe { d.release_front(2) };
+        unsafe { d.release_front(2) }.unwrap();
         d.check_invariants();
         assert_eq!(unsafe { *keeper.get() }, 16);
         assert_eq!(unsafe { *tail.get() }, 99);
@@ -301,7 +305,8 @@ mod arena {
             d.cursor(),
             Cursor {
                 chunk: 3,
-                offset: 0
+                offset: 0,
+                d_id: d.id()
             }
         );
         assert_eq!(unsafe { *d.alloc(7u64).unwrap().get() }, 7);

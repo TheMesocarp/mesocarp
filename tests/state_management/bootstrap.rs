@@ -17,7 +17,7 @@ fn test_e2e_bootstrap_seed_protection() {
     // because the horizon starts at GVT₀ = 0.
     assert_eq!(unsafe { tl.latest(&d) }.unwrap(), None);
     assert_eq!(tl.partial_chop(0), None);
-    assert!(tl.partial_rollback(0).is_err());
+    assert!(tl.partial_rollback(&d, 0).is_err());
 
     // Seed at GVT₀, then run events.
     tl.record(&mut d, 7, stamp(1, 0)).unwrap();
@@ -26,11 +26,11 @@ fn test_e2e_bootstrap_seed_protection() {
     tl.check_invariants();
 
     // INV-BOOT-1: the baseline is un-rollbackable...
-    assert!(tl.partial_rollback(0).is_err());
+    assert!(tl.partial_rollback(&d, 0).is_err());
 
     // ...while rolling back to just-after-bootstrap keeps exactly the seed.
-    let mark = tl.partial_rollback(2).unwrap().expect("seed survives");
-    unsafe { d.rewind(mark).unwrap() };
+    let mark = tl.partial_rollback(&d, 2).unwrap().expect("seed survives");
+    unsafe { d.restore(mark).unwrap() };
     tl.check_invariants();
     tl.check_lockstep(&d);
     assert_eq!(unsafe { tl.latest(&d) }.unwrap(), Some(&7));
@@ -44,7 +44,8 @@ fn test_e2e_bootstrap_teardown_and_reuse() {
         c0,
         Cursor {
             chunk: 0,
-            offset: 0
+            offset: 0,
+            d_id: d.id()
         }
     );
 

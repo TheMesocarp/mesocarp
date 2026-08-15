@@ -57,6 +57,8 @@ pub struct Handle<T> {
     _t: PhantomData<*mut T>,
 }
 
+unsafe impl<T: Send> Send for Handle<T> {} // Record, Chunk, CopyTimeline follow automatically
+
 impl<T> Clone for Handle<T> {
     fn clone(&self) -> Self {
         *self
@@ -81,6 +83,8 @@ struct Record<V> {
     stamp: Stamp,
     value: Handle<V>,
 }
+
+unsafe impl<V: Send> Send for Record<V> {}
 
 impl<V> Clone for Record<V> {
     fn clone(&self) -> Self {
@@ -147,17 +151,7 @@ impl<V> Chunk<V> {
     }
 }
 
-/// End of the newest allocation a timeline still references after rollback.
-/// The associated `Domain`'s bump may be rewound no further back than the
-/// max of these across every timeline allocating from it.
-#[derive(Clone, Copy, Debug)]
-pub struct HighMark {
-    /// Home chunk of the newest surviving record.
-    pub chunk: u32,
-    /// One past the end of that record's value in the raw chunk.
-    pub end: NonNull<u8>,
-}
-
+unsafe impl<V: Send> Send for Chunk<V> {}
 pub struct CopyTimeline<V> {
     chunks: VecDeque<Chunk<V>>,
     free: Vec<Chunk<V>>,
@@ -183,8 +177,7 @@ impl<V> CopyTimeline<V> {
     }
 
     fn fetch_fresh_chunk(&mut self) -> Result<Chunk<V>, MesoError> {
-        if self.chunks.back().is_some() {
-            let back = self.chunks.back_mut().unwrap();
+        if let Some(back) = self.chunks.back_mut() {
             if !back.seal {
                 back.seal();
             }
@@ -211,8 +204,8 @@ impl<V> CopyTimeline<V> {
         if self.chunks.len() == 0 {
             return None;
         };
-        let record = self.chunks.back()?;
-        let live = record.records().last()?;
+        let chunk = self.chunks.back()?;
+        let live = chunk.records().last()?;
 
         Some(live)
     }
@@ -251,52 +244,23 @@ impl<V> CopyTimeline<V> {
         Ok(())
     }
 
-    /// Rollback hook for this timeline: discard every record of type V with `stamp.time >= to`.
-    pub fn partial_rollback(&mut self, to: u64) -> Result<Option<HighMark>, MesoError> {
-        if let Some(t) = self.commit_horizon {
-            if to <= t {
-                return Err(MesoError::PastTheHorizon);
-            }
-        }
-        // Recycle wholly-invalid chunks off the back
-        while self.chunks.back().is_some_and(|c| c.lo.time >= to) {
-            let mut dead = self.chunks.pop_back().unwrap();
-            dead.reset();
-            self.free.push(dead);
-        }
-
-        let Some(back) = self.chunks.back_mut() else {
-            self.latest = None;
-            return Ok(None);
-        };
-        let keep = back.records().partition_point(|r| r.stamp.time < to);
-        back.len = keep;
-        back.seal = back.full();
-
-        let last = *back.records().last().expect("lo.time < to ⇒ keep ≥ 1");
-        self.latest = Some(last.stamp);
-        let end = unsafe {
-            NonNull::new_unchecked(
-                last.value
-                    .ptr
-                    .as_ptr()
-                    .cast::<u8>()
-                    .wrapping_add(size_of::<V>()),
-            )
-        };
-        Ok(Some(HighMark {
-            chunk: last.value.home_chunk,
-            end,
-        }))
+    /// Rollback entry point for the full-copy state saving scenario. Only used when `V` is a state type itself rather
+    /// than an `Undo` action enumerator.
+    pub fn partial_rollback(&mut self, d: &Domain, to: u64) -> Result<Option<Cursor>, MesoError> {
+        self.partial_rollback_apply(d, to, |_| {})
     }
 
-    /// Rollback hook for this timeline: discard every record of type V with `stamp.time >= to`.
+    /// Generic rollback hook this timeline: backwards iterates through all records of type V with `stamp.time >= to`,
+    /// than calls back to `callback(&V)`, before discarding the value. If the state saving
+    /// technique being employed is full copy, the `callback` function is a no-op. If the state saving is incremental,
+    /// `V` becomes an `Incremental::Undo` type and the callback is a mutation action on the state to undo
+    /// a change.
     fn partial_rollback_apply(
         &mut self,
         d: &Domain,
         to: u64,
-        mut undo: impl FnMut(&V),
-    ) -> Result<Option<HighMark>, MesoError> {
+        mut callback: impl FnMut(&V),
+    ) -> Result<Option<Cursor>, MesoError> {
         if d.id != self.domain_id {
             return Err(MesoError::ForeignDomain);
         }
@@ -309,7 +273,7 @@ impl<V> CopyTimeline<V> {
         while self.chunks.back().is_some_and(|c| c.lo.time >= to) {
             let mut dead = self.chunks.pop_back().unwrap();
             for r in dead.records().iter().rev() {
-                undo(unsafe { r.value.ptr.as_ref() });
+                callback(unsafe { r.value.ptr.as_ref() });
             }
             dead.reset();
             self.free.push(dead);
@@ -323,7 +287,7 @@ impl<V> CopyTimeline<V> {
         while back.len > keep {
             back.len -= 1;
             let r = unsafe { back.slots[back.len].assume_init_ref() };
-            undo(unsafe { r.value.ptr.as_ref() });
+            callback(unsafe { r.value.ptr.as_ref() });
         }
         back.seal = back.full();
 
@@ -338,9 +302,18 @@ impl<V> CopyTimeline<V> {
                     .wrapping_add(size_of::<V>()),
             )
         };
-        Ok(Some(HighMark {
-            chunk: last.value.home_chunk,
-            end,
+        let chunk_num = last.value.home_chunk;
+        let chunk = d.fetch_chunk(chunk_num)?;
+        let off = (end.as_ptr() as usize)
+            .checked_sub(chunk.ptr.as_ptr() as usize)
+            .ok_or(MesoError::MarkOutsideHomeChunk)?;
+        if off > chunk.layout.size() {
+            return Err(MesoError::MarkOutsideHomeChunk);
+        };
+        Ok(Some(Cursor {
+            chunk: chunk_num,
+            offset: off as u32,
+            d_id: self.domain_id,
         }))
     }
 
@@ -398,14 +371,18 @@ impl<V: Incremental> IncrementalTimeline<V> {
         undo: V::Undo,
         stamp: Stamp,
     ) -> Result<(), MesoError> {
-        self.state = new;
         self.log.record(d, undo, stamp)?;
+        self.state = new;
         Ok(())
     }
 
-    pub fn partial_rollback(&mut self, d: &Domain, to: u64) -> Result<Option<HighMark>, MesoError> {
+    pub fn partial_rollback(&mut self, d: &Domain, to: u64) -> Result<Option<Cursor>, MesoError> {
         let s = &mut self.state;
         self.log.partial_rollback_apply(d, to, |u| s.undo(u))
+    }
+
+    pub fn partial_chop(&mut self, until: u64) -> Option<u32> {
+        self.log.partial_chop(until)
     }
 }
 
@@ -416,12 +393,29 @@ struct RawChunk {
     std: bool,
 }
 
+unsafe impl Send for RawChunk {}
+
 /// Position of the bump pointer. Captured before an event runs; restored if that
 /// event is rolled back.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Cursor {
     pub chunk: u32,
     pub offset: u32,
+    pub d_id: usize,
+}
+
+impl Ord for Cursor {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.chunk
+            .cmp(&other.chunk)
+            .then(self.offset.cmp(&other.offset))
+            .then(self.d_id.cmp(&other.d_id))
+    }
+}
+impl PartialOrd for Cursor {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
 }
 
 static NEXT_DOMAIN: AtomicUsize = AtomicUsize::new(0);
@@ -465,34 +459,25 @@ impl Domain {
         })
     }
 
+    pub fn id(&self) -> usize {
+        self.id
+    }
+
     /// Current bump position. Capture before an event runs.
     pub fn cursor(&self) -> Cursor {
         if self.chunks.is_empty() {
             // Nothing allocated yet; restoring here means "rewind to the start".
             return Cursor {
+                d_id: self.id,
                 chunk: self.base,
                 offset: 0,
             };
         }
         Cursor {
+            d_id: self.id,
             chunk: self.back_id(),
             offset: self.cursor as u32,
         }
-    }
-
-    /// Translate a rollback mark into a bump position in this domain.
-    fn cursor_at(&self, mark: HighMark) -> Result<Cursor, MesoError> {
-        let chunk = self.fetch_chunk(mark.chunk)?;
-        let off = (mark.end.as_ptr() as usize)
-            .checked_sub(chunk.ptr.as_ptr() as usize)
-            .ok_or(MesoError::MarkOutsideHomeChunk)?;
-        if off > chunk.layout.size() {
-            return Err(MesoError::MarkOutsideHomeChunk);
-        };
-        Ok(Cursor {
-            chunk: mark.chunk,
-            offset: off as u32,
-        })
     }
 
     /// Reserve room for `layout`; returns (chunk id, byte offset).
@@ -544,7 +529,7 @@ impl Domain {
     }
 
     fn fetch_chunk(&self, id: u32) -> Result<&RawChunk, MesoError> {
-        if !(id >= self.base) {
+        if id < self.base {
             return Err(MesoError::BelowChopLine);
         };
         self.chunks
@@ -554,22 +539,28 @@ impl Domain {
 
     /// FIFO release of committed history: frees every chunk with id < `keep_from`.
     /// Advances `base`, so surviving ids never move. No-op when keep_from == base.
+    /// Rejects floors already chopped (`BelowChopLine`) and floors past the open
+    /// chunk (`PastTheHorizon`) — the same id gates `restore` applies from the
+    /// other end.
     ///
     /// # Safety
     /// `keep_from` must be a liveness floor: no live `Handle` and no restorable
     /// `Cursor` may reference a chunk with id < `keep_from`. Under the write
     /// contract (single writer, stamps non-decreasing between rollbacks), the home
     /// chunk of the newest record at-or-before GVT satisfies this.
-    pub unsafe fn release_front(&mut self, keep_from: u32) {
-        debug_assert!(
-            keep_from >= self.base && (self.chunks.is_empty() || keep_from <= self.back_id()),
-            "chop floor out of range"
-        );
+    pub unsafe fn release_front(&mut self, keep_from: u32) -> Result<(), MesoError> {
+        if keep_from < self.base {
+            return Err(MesoError::BelowChopLine);
+        };
+        if !self.chunks.is_empty() && keep_from > self.back_id() {
+            return Err(MesoError::PastTheHorizon);
+        };
         while self.base < keep_from && self.chunks.len() > 1 {
             let c = self.chunks.pop_front().unwrap();
             self.base += 1;
             unsafe { self.release(c) };
         }
+        Ok(())
     }
 
     unsafe fn release(&mut self, c: RawChunk) {
@@ -588,6 +579,9 @@ impl Domain {
     /// it. A `Cursor` captured before the rolled-back event satisfies this
     /// (stamps non-decreasing between rollbacks)
     pub unsafe fn restore(&mut self, to: Cursor) -> Result<(), MesoError> {
+        if to.d_id != self.id {
+            return Err(MesoError::ForeignDomain);
+        }
         if to.chunk < self.base {
             return Err(MesoError::BelowChopLine);
         };
@@ -609,12 +603,6 @@ impl Domain {
         if to.chunk > self.base {
             return Err(MesoError::PastTheHorizon);
         };
-        Ok(())
-    }
-
-    pub unsafe fn rewind(&mut self, mark: HighMark) -> Result<(), MesoError> {
-        let c = self.cursor_at(mark)?;
-        unsafe { self.restore(c) }?;
         Ok(())
     }
 
@@ -659,6 +647,8 @@ impl Domain {
         RawChunk { ptr, layout, std }
     }
 }
+
+unsafe impl Send for Domain {}
 
 impl Drop for Domain {
     fn drop(&mut self) {

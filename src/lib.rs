@@ -23,7 +23,7 @@ pub enum MesoError {
     InvalidUserId,
     #[error("Mark points outside the current housing chunk, an arithmatic error was made.")]
     MarkOutsideHomeChunk,
-    #[error("handle or restore target below the chop line; the current commit horizon fixed by the GVT.")]
+    #[error("handle, chop floor, or restore target below the chop line; the current commit horizon fixed by the GVT.")]
     BelowChopLine,
     #[error("Initialized data structure with no slots.")]
     InitializedWithNoSlots,

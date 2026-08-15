@@ -9,7 +9,7 @@ points for contract review.
 
 All `state_management` suites live in `tests/state_management/` (unit, invariant, and e2e files per
 `skills/TEST.md`) and are meant to also run under miri:
-`cargo +nightly miri test --test transient`.
+`cargo +nightly miri test --test state_management`.
 "Tests: none yet" marks a gap, not a non-testable property.
 
 ---
@@ -26,8 +26,8 @@ never move or get rewritten.
 Tests: `tests/state_management/release_front.rs::test_releaseFront_UpdatesBaseAndFreeList`,
 `…test_releaseFront_PreservesSurvivorValues` (fresh ids 3–4 after recycling),
 `…test_releaseFront_NoopAtBaseAndEmptyEdges`,
-`…test_releaseFront_PanicsWhenFloorAboveOpenChunk` / `…WhenFloorBelowBase` (debug
-range asserts).
+`…test_releaseFront_RevertsWhenFloorAboveOpenChunk` / `…WhenFloorBelowBase` (id
+range gates).
 
 ### INV-ARENA-2 — LIFO ids are reused
 
@@ -77,7 +77,7 @@ bytes only. Values must not own heap resources.
 
 Tests: `tests/state_management/invariants.rs::arena::test_inv_arena_5_needs_drop_rejected_at_alloc`
 (direct gate, incl. the oversize-droppy ordering), `…rejected_at_record` (indirect
-gate; also pins that `Timeline::<Droppy>::new` succeeds — the gate is per-alloc),
+gate; also pins that `CopyTimeline::<String>::new` succeeds — the gate is per-alloc),
 `…test_inv_arena_5_gate_is_exactly_needs_drop` (`MaybeUninit<String>`, ZST),
 `…test_inv_arena_5_release_paths_free_bytes_only` (all four release paths under miri's
 leak check). Not covered: entry-point closure (alloc/record being the only
@@ -86,9 +86,12 @@ allocation sites is structural, verified at review).
 ### INV-ARENA-6 — Domain ids are process-unique and never reused
 
 Ids come from a global atomic counter, so a dropped `Domain`'s id can never be
-presented again. This makes the `ForeignDomain` gate temporally sound: every deref-ish
-entry point (`Timeline::record`, `Timeline::live_state`) requires presenting a live
-`&Domain` whose id matches the one captured at `Timeline::new`.
+presented again. This makes the `ForeignDomain` gate temporally sound. Two families of
+entry point carry it. Timeline-side, every deref-ish call (`CopyTimeline::record`,
+`::latest`, `::partial_rollback`) requires presenting a live `&Domain` whose id matches
+the one captured at `CopyTimeline::new`. Arena-side, every call that applies a `Cursor`
+or `HighMark` (`Domain::restore`, `::rewind`, `::cursor_at`) checks the id stamped into
+the mark itself (INV-PROTO-6).
 
 Tests: `tests/state_management/invariants.rs::arena::test_inv_arena_6_foreign_domain_gated_on_every_deref_entry`
 (pairwise gate, self-pairs pass, rejection mutates nothing),
@@ -96,11 +99,11 @@ Tests: `tests/state_management/invariants.rs::arena::test_inv_arena_6_foreign_do
 proves the id check fires before any dangling deref),
 `…test_inv_arena_6_id_gate_precedes_stamp_and_drop_gates` — note: `record`'s gate
 order is now id → `TimeTravel` → stamp → drop (INV-HORIZON-4); the test predates
-`TimeTravel` and pins three of the four — extension pending. Not covered: counter
-overflow (2⁶⁴ constructions), concurrent-construction uniqueness (atomic by
-construction; publicly unobservable — `Domain`/`Timeline` are `!Send`/`!Sync` via
-their `NonNull` fields), and raw `Cursor`/`HighMark` cross-domain application
-(INV-PROTO-6's gap, not closed by this gate).
+`TimeTravel` and pins three of the four — extension pending. The timeline-side tests
+reach `record` and `latest` only; `partial_rollback`'s gate and the entire arena-side
+family are unpinned. Not covered: counter overflow (2⁶⁴ constructions),
+concurrent-construction uniqueness (atomic by construction; publicly unobservable —
+`Domain`/`CopyTimeline` are `!Send`/`!Sync` via their `NonNull` fields).
 
 ### INV-ARENA-7 — Value addresses are stable
 
@@ -126,12 +129,17 @@ bound), `…test_domainNew_RevertsWhenInitializedWithNoSlots` (zero).
 
 ---
 
-## Index (`Timeline<V>`)
+## Index (`CopyTimeline<V>`)
 
 Index chunks live on the regular heap (`Box<[MaybeUninit<Record<V>>]>`), not in the
 arena — the timeline stores `(Stamp, Handle<V>)` records; only the values live in the
 `Domain`. `std_chunk_size` counts record **slots**; `Domain::new`'s `chunk_size`
 counts **bytes**.
+
+Scope: these entries constrain `CopyTimeline<V>` alone. `IncrementalTimeline<V>` and
+the `Incremental` trait are work in progress and deliberately uncovered — no id here
+binds them yet, including the undo-callback path they drive through
+`partial_rollback_apply`.
 
 ### INV-INDEX-1 — Every index chunk holds at least one record
 
@@ -167,13 +175,15 @@ A chunk seals when it fills or when it is superseded as the back chunk
 deliberately re-opening a truncated back chunk (rollback) or a compacted single-chunk
 front (chop) so subsequent `record` calls refill it instead of fetching a fresh chunk.
 This refill path is what lets the allocator amortize across rollback cycles.
+Asymmetry: rollback recomputes unconditionally, chop only inside its `idx > 1`
+compaction branch — a chop that shifts no records leaves `seal` as it found it.
 
 Tests: none yet.
 
 ### INV-INDEX-5 — Value-before-index write order
 
 `record` arena-allocates the value before touching the index. An error between the
-two (currently unreachable — the index path is infallible once `Timeline::new` has
+two (currently unreachable — the index path is infallible once `CopyTimeline::new` has
 rejected zero slots) would leave a ghost value owned by no record, reclaimed only
 wholesale by a later rollback or chop.
 
@@ -181,9 +191,9 @@ Tests: N/A — documentation entry.
 
 ### INV-INDEX-6 — A timeline is bound to exactly one domain
 
-`Timeline::new` captures the domain id; `record` and `live_state` gate on it
-(`ForeignDomain`). Combined with INV-ARENA-6, a timeline can never deref through the
-wrong (or a dead) arena via the safe-facing API.
+`CopyTimeline::new` captures the domain id; `record`, `latest`, and `partial_rollback`
+gate on it (`ForeignDomain`). Combined with INV-ARENA-6, a timeline can never deref
+through the wrong (or a dead) arena via the safe-facing API.
 
 Tests: none yet.
 
@@ -216,8 +226,11 @@ the pre-arming teardown path (INV-BOOT-4).
 Naming note: three variants now sit on this line — `PastTheHorizon` (rollback gate),
 `TimeTravel` (write gate, INV-HORIZON-4), and `BelowChopLine` (arena id gate, whose
 message "below the chop line; the current commit horizon fixed by the GVT" is the
-semantic match for the rollback case). The vocabulary should be settled across the
-trio at once. Variant choice pending.
+semantic match for the rollback case). `PastTheHorizon` additionally carries a second,
+unrelated arena meaning — chunk id past the newest allocated chunk, in `fetch_chunk`,
+`restore`, and `release_front` — so one name now reports two different faults. The
+vocabulary should be settled across the trio, and that overload split, at once.
+Variant choice pending.
 
 Tests: flow coverage in `tests/state_management/timewarp.rs::test_e2e_timewarp_straggler_rollback_round`
 (post-chop rollback gates) and `tests/state_management/bootstrap.rs::test_e2e_bootstrap_seed_protection`
@@ -289,7 +302,11 @@ Tests: flow coverage in `tests/state_management/timewarp.rs::test_e2e_timewarp_s
 A chop runs `partial_chop` on every timeline and calls `release_front` at the
 *minimum* returned floor; empty timelines (`None`) constrain nothing. `keep_from` must
 be a liveness floor: no live `Handle` and no restorable `Cursor` may name a chunk
-below it.
+below it. Liveness stays the caller's obligation; the id range no longer is.
+`release_front` returns `Result`, rejecting floors already chopped (`BelowChopLine`)
+and floors past the open chunk (`PastTheHorizon`) — the same two gates `restore`
+applies from the other end — and frees nothing when it refuses. A sweep that discards
+that `Result` silently skips its chop.
 
 Tests: `release_front` mechanics under `tests/state_management/release_front.rs`; sweep
 composition: flow coverage in
@@ -298,7 +315,7 @@ composition: flow coverage in
 
 ### INV-PROTO-4 — Reads require lockstep
 
-`live_state` is sound iff the domain has not been rewound below the timeline's newest
+`latest` is sound iff the domain has not been rewound below the timeline's newest
 surviving record nor chopped above its floor — the id gate cannot see a protocol
 violation that already happened. While the returned `&V` lives, the shared `&Domain`
 borrow blocks every arena mutation (`alloc`, `restore`, `release_front`, `reset`);
@@ -316,16 +333,22 @@ cannot detect it, and applying it silently corrupts the bump position.
 
 Tests: none yet.
 
-### INV-PROTO-6 — Cross-domain marks are only probabilistically gated (known gap)
+### INV-PROTO-6 — Cross-domain cursors and marks are gated
 
-`Cursor` carries no domain id: `restore` cannot distinguish a foreign domain's cursor
-that happens to be numerically in range. `HighMark` fares better — `cursor_at`'s
-containment check (`MarkOutsideHomeChunk`) almost certainly rejects a foreign pointer
-— but neither is a soundness gate. Applying either across domains is a contract
-violation. Candidate hardening: stamp the domain id into `Cursor` and gate like
-`ForeignDomain`.
+`Cursor` and `HighMark` both carry the id of the domain they came from, stamped at
+capture (`Domain::cursor`, `cursor_at`) and on the mark `partial_rollback` returns.
+Every site that applies one checks it before touching the arena: `restore`, `rewind`,
+and `cursor_at` reject a foreign `d_id` with `ForeignDomain`, ahead of all range and
+containment logic. This closes what was a known gap — cross-domain application is a
+hard gate now, not a contract term the caller had to honour. `cursor_at`'s containment
+check (`MarkOutsideHomeChunk`), previously the only thing standing between a foreign
+mark and the arena, is demoted to a backstop behind the id check.
 
-Tests: none yet.
+Scope: this gates *which arena* a mark may be applied to, not *when*. Same-domain
+staleness is untouched and remains caller-upheld — INV-PROTO-5, which INV-ARENA-2
+makes undetectable by any numeric gate.
+
+Tests: none yet — the arena-side `ForeignDomain` family is unpinned (INV-ARENA-6).
 
 ---
 
@@ -337,7 +360,7 @@ Every timeline writes its baseline record at the initial GVT before any event
 executes, and the orchestration then arms every timeline with a `partial_chop(GVT₀)`
 sweep. Protection dates from the arming sweep, not from construction: post-arming,
 under INV-HORIZON-2/3, the baseline — or a newer committed record — survives every
-legal operation thereafter, `live_state` never reverts to `None`, and `reset` is
+legal operation thereafter, `latest` never reverts to `None`, and `reset` is
 unreachable on the runtime path. Pre-arming, a rollback to 0 legally empties
 everything (INV-BOOT-4's teardown window).
 

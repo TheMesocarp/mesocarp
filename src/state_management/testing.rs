@@ -3,7 +3,7 @@
 //! pattern: the feature exists for this repo's own test suites, enabled via
 //! the self dev-dependency; don't enable it downstream). Each walker panics on
 //! the first violation, citing the invariant id from
-//! `docs/transient/invariants.md`, so any test tier (unit, integration, future
+//! `docs/state_management/invariants.md`, so any test tier (unit, integration, future
 //! state machine) can call it after a mutation and turn a silent structural
 //! corruption into a loud failure.
 

@@ -37,11 +37,11 @@ fn test_e2e_timewarp_straggler_rollback_round() {
     // to the maximum mark — a single timeline's mark may sit below a sibling's
     // surviving value.
     let marks = [
-        counts.partial_rollback(4).unwrap(),
-        states.partial_rollback(4).unwrap(),
+        counts.partial_rollback(&d, 4).unwrap(),
+        states.partial_rollback(&d, 4).unwrap(),
     ];
     let mark = fold_marks(marks).expect("seeded timelines always keep a survivor");
-    unsafe { d.rewind(mark).unwrap() };
+    unsafe { d.restore(mark).unwrap() };
     counts.check_lockstep(&d);
     states.check_lockstep(&d);
     assert_eq!(unsafe { counts.latest(&d) }.unwrap(), Some(&30));
@@ -71,8 +71,8 @@ fn test_e2e_timewarp_straggler_rollback_round() {
     assert_eq!(unsafe { states.latest(&d) }.unwrap(), Some(&[13; 4]));
 
     // INV-HORIZON-2: committed history is now un-rollbackable.
-    assert!(counts.partial_rollback(5).is_err());
-    assert!(states.partial_rollback(4).is_err());
+    assert!(counts.partial_rollback(&d, 5).is_err());
+    assert!(states.partial_rollback(&d, 4).is_err());
     // Strictly above the horizon stays legal.
-    assert!(counts.partial_rollback(6).is_ok());
+    assert!(counts.partial_rollback(&d, 6).is_ok());
 }
