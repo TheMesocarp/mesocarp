@@ -8,7 +8,7 @@
 //! steady-state no-alloc cycling) lands here as it gets written.
 
 use crate::common::{fold_marks, min_floor, stamp};
-use mesocarp::transient::{Domain, Timeline};
+use mesocarp::state_management::{CopyTimeline, Domain};
 
 const CHUNK_BYTES: usize = 64;
 const INDEX_SLOTS: usize = 4;
@@ -16,8 +16,8 @@ const INDEX_SLOTS: usize = 4;
 #[test]
 fn test_e2e_timewarp_straggler_rollback_round() {
     let mut d = Domain::new(CHUNK_BYTES).unwrap();
-    let mut counts: Timeline<u64> = Timeline::new(INDEX_SLOTS, &d).unwrap();
-    let mut states: Timeline<[u64; 4]> = Timeline::new(INDEX_SLOTS, &d).unwrap();
+    let mut counts: CopyTimeline<u64> = CopyTimeline::new(INDEX_SLOTS, &d).unwrap();
+    let mut states: CopyTimeline<[u64; 4]> = CopyTimeline::new(INDEX_SLOTS, &d).unwrap();
 
     // INV-BOOT-1: seed both timelines at GVT₀ = 0 before any event runs.
     counts.record(&mut d, 0, stamp(0, 0)).unwrap();
@@ -44,8 +44,8 @@ fn test_e2e_timewarp_straggler_rollback_round() {
     unsafe { d.rewind(mark).unwrap() };
     counts.check_lockstep(&d);
     states.check_lockstep(&d);
-    assert_eq!(unsafe { counts.live_state(&d) }.unwrap(), Some(&30));
-    assert_eq!(unsafe { states.live_state(&d) }.unwrap(), Some(&[3; 4]));
+    assert_eq!(unsafe { counts.latest(&d) }.unwrap(), Some(&30));
+    assert_eq!(unsafe { states.latest(&d) }.unwrap(), Some(&[3; 4]));
 
     // Re-execution writes different values for the undone times.
     for t in 4..=6u64 {
@@ -54,7 +54,7 @@ fn test_e2e_timewarp_straggler_rollback_round() {
     }
     counts.check_invariants();
     states.check_invariants();
-    assert_eq!(unsafe { counts.live_state(&d) }.unwrap(), Some(&600));
+    assert_eq!(unsafe { counts.latest(&d) }.unwrap(), Some(&600));
 
     // GVT reaches 5: sweep chops, release committed history at the min floor.
     let floors = [counts.partial_chop(5), states.partial_chop(5)];
@@ -67,8 +67,8 @@ fn test_e2e_timewarp_straggler_rollback_round() {
     states.check_lockstep(&d);
 
     // Survivors read back unchanged through the chop.
-    assert_eq!(unsafe { counts.live_state(&d) }.unwrap(), Some(&600));
-    assert_eq!(unsafe { states.live_state(&d) }.unwrap(), Some(&[13; 4]));
+    assert_eq!(unsafe { counts.latest(&d) }.unwrap(), Some(&600));
+    assert_eq!(unsafe { states.latest(&d) }.unwrap(), Some(&[13; 4]));
 
     // INV-HORIZON-2: committed history is now un-rollbackable.
     assert!(counts.partial_rollback(5).is_err());

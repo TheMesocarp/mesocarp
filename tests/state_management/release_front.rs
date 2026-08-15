@@ -4,7 +4,7 @@
 //! feature's `Domain::shape()` = `(base, live chunks, free chunks)`.
 
 use crate::common::{filled, CS};
-use mesocarp::transient::{Domain, Handle};
+use mesocarp::state_management::{Domain, Handle};
 
 // Frees the exact prefix and recycles standard chunks.
 #[test]

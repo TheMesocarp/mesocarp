@@ -6,7 +6,7 @@
 //! this file holds direct pins of documented invariants.
 
 mod arena {
-    use mesocarp::transient::{Cursor, Domain, Timeline};
+    use mesocarp::state_management::{CopyTimeline, Cursor, Domain};
     use mesocarp::MesoError;
     use std::mem::MaybeUninit;
 
@@ -94,10 +94,22 @@ mod arena {
             d.alloc(i).unwrap(); // chunks 0, 1, 2
         }
         unsafe { d.reset() };
-        assert_eq!(d.cursor(), Cursor { chunk: 3, offset: 0 });
+        assert_eq!(
+            d.cursor(),
+            Cursor {
+                chunk: 3,
+                offset: 0
+            }
+        );
         assert_eq!(d.alloc(0u64).unwrap().chunk(), 3); // id 3: RETIRED past 0..=2
         assert_eq!(
-            unsafe { d.restore(Cursor { chunk: 0, offset: 0 }) }.unwrap_err(),
+            unsafe {
+                d.restore(Cursor {
+                    chunk: 0,
+                    offset: 0,
+                })
+            }
+            .unwrap_err(),
             MesoError::BelowChopLine
         );
         d.check_invariants();
@@ -136,8 +148,20 @@ mod arena {
         let mut d = Domain::new(CS).unwrap();
         d.alloc(1u64).unwrap();
         d.alloc(2u64).unwrap(); // chunk 0, bump at 16
-        unsafe { d.restore(Cursor { chunk: 0, offset: 60 }).unwrap() };
-        assert_eq!(d.cursor(), Cursor { chunk: 0, offset: 60 });
+        unsafe {
+            d.restore(Cursor {
+                chunk: 0,
+                offset: 60,
+            })
+            .unwrap()
+        };
+        assert_eq!(
+            d.cursor(),
+            Cursor {
+                chunk: 0,
+                offset: 60
+            }
+        );
         // 60 aligns to 64; 64 + 8 exceeds the chunk, so allocation rolls
         // into a fresh chunk instead of touching out-of-bounds bytes.
         assert_eq!(d.alloc(3u64).unwrap().chunk(), 1);
@@ -165,7 +189,7 @@ mod arena {
     //   walkers, miri cleanliness.
     //
     // Not covered here: entry-point *closure* — that Domain::alloc and
-    // Timeline::record are the only allocation sites is structural and
+    // CopyTimeline::record are the only allocation sites is structural and
     // re-verified at review, not runtime; any future alloc entry point must
     // cite the gate. And "destructor never runs" for a type that HAS one is
     // unreachable by construction — that unreachability is the invariant.
@@ -201,22 +225,23 @@ mod arena {
 
     // Gate leg at the indirect entry: record propagates NeedsDrop after the
     // id/stamp gates but before any index write. Pins that the gate is
-    // per-allocation — Timeline::<String>::new itself succeeds today.
+    // per-allocation — CopyTimeline::<String>::new itself succeeds today.
     #[test]
     fn test_inv_arena_5_needs_drop_rejected_at_record() {
         let mut d = Domain::new(CS).unwrap();
         let c0 = d.cursor();
-        let mut tl: Timeline<String> = Timeline::new(4, &d).unwrap();
+        let mut tl: CopyTimeline<String> = CopyTimeline::new(4, &d).unwrap();
 
         assert_eq!(
-            tl.record(&mut d, String::from("oops"), stamp(0, 0)).unwrap_err(),
+            tl.record(&mut d, String::from("oops"), stamp(0, 0))
+                .unwrap_err(),
             MesoError::NeedsDrop
         );
 
         // Neither side moved: no value entered the arena, no record entered
         // the index, and the failed stamp was not consumed.
         assert_eq!(d.cursor(), c0);
-        assert_eq!(unsafe { tl.live_state(&d) }.unwrap(), None);
+        assert_eq!(unsafe { tl.latest(&d) }.unwrap(), None);
         assert_eq!(tl.partial_chop(0), None);
         tl.check_invariants();
         d.check_invariants();
@@ -272,7 +297,13 @@ mod arena {
         // Wholesale teardown: base advances past the survivor chunk.
         unsafe { d.reset() };
         d.check_invariants();
-        assert_eq!(d.cursor(), Cursor { chunk: 3, offset: 0 });
+        assert_eq!(
+            d.cursor(),
+            Cursor {
+                chunk: 3,
+                offset: 0
+            }
+        );
         assert_eq!(unsafe { *d.alloc(7u64).unwrap().get() }, 7);
 
         // Drop runs here with live chunks AND a populated free list;
@@ -285,8 +316,8 @@ mod arena {
     // Proof call graph:
     //   uniqueness: Domain::new → NEXT_DOMAIN.fetch_add(1, Relaxed)
     //               ⇒ ids strictly increase; Drop returns nothing.
-    //   binding:    Timeline::new captures d.id once; no API mutates it.
-    //   gate:       record(d) / live_state(d) → d.id ≠ domain_id ⇒
+    //   binding:    CopyTimeline::new captures d.id once; no API mutates it.
+    //   gate:       record(d) / latest(d) → d.id ≠ domain_id ⇒
     //               Err(ForeignDomain), before any mutation or deref.
     //   temporal closure: a dropped Domain's id is unpresentable forever —
     //               uniqueness bars any new domain from matching, borrowck
@@ -305,7 +336,7 @@ mod arena {
     // Not covered here: NEXT_DOMAIN usize overflow (2^64 constructions —
     // ARENA-8-style documented limit); concurrent-construction uniqueness
     // (guaranteed by fetch_add atomicity but publicly unobservable — Domain
-    // and Timeline are !Send/!Sync via their NonNull fields, so no
+    // and CopyTimeline are !Send/!Sync via their NonNull fields, so no
     // cross-thread presentation can even be written; structural, verified
     // at review); the monotonicity ≻ needs_drop rung (a droppy timeline can
     // never acquire `latest`, so only the code order shows it); and
@@ -321,9 +352,9 @@ mod arena {
     fn test_inv_arena_6_foreign_domain_gated_on_every_deref_entry() {
         let mut d_a = Domain::new(CS).unwrap();
         let mut d_b = Domain::new(CS).unwrap();
-        let mut tl_a: Timeline<u64> = Timeline::new(4, &d_a).unwrap();
-        let mut tl_a2: Timeline<u64> = Timeline::new(4, &d_a).unwrap();
-        let mut tl_b: Timeline<u64> = Timeline::new(4, &d_b).unwrap();
+        let mut tl_a: CopyTimeline<u64> = CopyTimeline::new(4, &d_a).unwrap();
+        let mut tl_a2: CopyTimeline<u64> = CopyTimeline::new(4, &d_a).unwrap();
+        let mut tl_b: CopyTimeline<u64> = CopyTimeline::new(4, &d_b).unwrap();
 
         // Self-pairs pass: the gate is per-binding, not exclusive ownership.
         tl_a.record(&mut d_a, 1, stamp(0, 0)).unwrap();
@@ -337,11 +368,11 @@ mod arena {
             MesoError::ForeignDomain
         );
         assert_eq!(
-            unsafe { tl_a.live_state(&d_b) }.unwrap_err(),
+            unsafe { tl_a.latest(&d_b) }.unwrap_err(),
             MesoError::ForeignDomain
         );
         assert_eq!(
-            unsafe { tl_b.live_state(&d_a) }.unwrap_err(),
+            unsafe { tl_b.latest(&d_a) }.unwrap_err(),
             MesoError::ForeignDomain
         );
 
@@ -349,7 +380,7 @@ mod arena {
         // stamp the foreign call failed with succeeds at home.
         assert_eq!(d_b.cursor(), c_b);
         tl_a.record(&mut d_a, 9, stamp(1, 0)).unwrap();
-        assert_eq!(unsafe { tl_a.live_state(&d_a) }.unwrap(), Some(&9));
+        assert_eq!(unsafe { tl_a.latest(&d_a) }.unwrap(), Some(&9));
         tl_a.check_lockstep(&d_a);
         tl_a2.check_lockstep(&d_a);
         tl_b.check_lockstep(&d_b);
@@ -360,19 +391,19 @@ mod arena {
     // ever match the captured id. The very next construction is the
     // likeliest collision under any hypothetical id-reuse scheme, so the
     // probe starts there. Under miri this doubles as the ordering proof:
-    // the id gate must reject BEFORE live_state can deref a dangling
+    // the id gate must reject BEFORE latest can deref a dangling
     // record pointer.
     #[test]
     fn test_inv_arena_6_dropped_domain_id_never_returns() {
         let mut d_old = Domain::new(CS).unwrap();
-        let mut tl: Timeline<u64> = Timeline::new(4, &d_old).unwrap();
+        let mut tl: CopyTimeline<u64> = CopyTimeline::new(4, &d_old).unwrap();
         tl.record(&mut d_old, 42, stamp(0, 0)).unwrap();
         drop(d_old); // tl now holds dangling pointers it must never follow
 
         for i in 0..16u64 {
             let mut d_new = Domain::new(CS).unwrap();
             assert_eq!(
-                unsafe { tl.live_state(&d_new) }.unwrap_err(),
+                unsafe { tl.latest(&d_new) }.unwrap_err(),
                 MesoError::ForeignDomain
             );
             assert_eq!(
@@ -380,9 +411,9 @@ mod arena {
                 MesoError::ForeignDomain
             );
             // Churn poisons nothing: fresh bindings to fresh domains work.
-            let mut tl_new: Timeline<u64> = Timeline::new(4, &d_new).unwrap();
+            let mut tl_new: CopyTimeline<u64> = CopyTimeline::new(4, &d_new).unwrap();
             tl_new.record(&mut d_new, i, stamp(0, 0)).unwrap();
-            assert_eq!(unsafe { tl_new.live_state(&d_new) }.unwrap(), Some(&i));
+            assert_eq!(unsafe { tl_new.latest(&d_new) }.unwrap(), Some(&i));
             tl_new.check_lockstep(&d_new);
         }
         // The stale index is still structurally sound — it just can't deref.
@@ -399,7 +430,7 @@ mod arena {
         let mut d_a = Domain::new(CS).unwrap();
         let mut d_b = Domain::new(CS).unwrap();
 
-        let mut tl_u: Timeline<u64> = Timeline::new(4, &d_a).unwrap();
+        let mut tl_u: CopyTimeline<u64> = CopyTimeline::new(4, &d_a).unwrap();
         tl_u.record(&mut d_a, 1, stamp(5, 0)).unwrap();
         assert_eq!(
             tl_u.record(&mut d_b, 2, stamp(1, 0)).unwrap_err(),
@@ -410,13 +441,15 @@ mod arena {
             MesoError::TimestampMonotonicityFailure
         );
 
-        let mut tl_s: Timeline<String> = Timeline::new(4, &d_a).unwrap();
+        let mut tl_s: CopyTimeline<String> = CopyTimeline::new(4, &d_a).unwrap();
         assert_eq!(
-            tl_s.record(&mut d_b, String::from("x"), stamp(0, 0)).unwrap_err(),
+            tl_s.record(&mut d_b, String::from("x"), stamp(0, 0))
+                .unwrap_err(),
             MesoError::ForeignDomain
         );
         assert_eq!(
-            tl_s.record(&mut d_a, String::from("x"), stamp(0, 0)).unwrap_err(),
+            tl_s.record(&mut d_a, String::from("x"), stamp(0, 0))
+                .unwrap_err(),
             MesoError::NeedsDrop
         );
     }

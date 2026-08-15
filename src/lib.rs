@@ -2,7 +2,7 @@ use thiserror::Error;
 
 pub mod comms;
 pub mod scheduling;
-pub mod transient;
+pub mod state_management;
 
 /// Error type for all primitives
 #[derive(Debug, Error, PartialEq, Eq)]
@@ -39,4 +39,8 @@ pub enum MesoError {
     NeedsDrop,
     #[error("Attempting to read the state of a foreign `Domain` from the wrong `Timeline<V>`.")]
     ForeignDomain,
+    #[error(
+        "Attemped to use incremental state saving logic on a copy state saving data structure."
+    )]
+    NotIncremental,
 }

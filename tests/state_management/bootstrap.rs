@@ -6,16 +6,16 @@
 //! seed (INV-BOOT-3) — blocked on the object-creation-as-event story.
 
 use crate::common::stamp;
-use mesocarp::transient::{Cursor, Domain, Timeline};
+use mesocarp::state_management::{CopyTimeline, Cursor, Domain};
 
 #[test]
 fn test_e2e_bootstrap_seed_protection() {
     let mut d = Domain::new(64).unwrap();
-    let mut tl: Timeline<u64> = Timeline::new(4, &d).unwrap();
+    let mut tl: CopyTimeline<u64> = CopyTimeline::new(4, &d).unwrap();
 
     // Pre-seed: no state, no floor — and rollback-to-zero is already illegal,
     // because the horizon starts at GVT₀ = 0.
-    assert_eq!(unsafe { tl.live_state(&d) }.unwrap(), None);
+    assert_eq!(unsafe { tl.latest(&d) }.unwrap(), None);
     assert_eq!(tl.partial_chop(0), None);
     assert!(tl.partial_rollback(0).is_err());
 
@@ -33,7 +33,7 @@ fn test_e2e_bootstrap_seed_protection() {
     unsafe { d.rewind(mark).unwrap() };
     tl.check_invariants();
     tl.check_lockstep(&d);
-    assert_eq!(unsafe { tl.live_state(&d) }.unwrap(), Some(&7));
+    assert_eq!(unsafe { tl.latest(&d) }.unwrap(), Some(&7));
 }
 
 #[test]
@@ -48,7 +48,7 @@ fn test_e2e_bootstrap_teardown_and_reuse() {
         }
     );
 
-    let mut tl: Timeline<u64> = Timeline::new(4, &d).unwrap();
+    let mut tl: CopyTimeline<u64> = CopyTimeline::new(4, &d).unwrap();
     tl.record(&mut d, 1, stamp(0, 0)).unwrap();
     tl.record(&mut d, 2, stamp(1, 0)).unwrap();
 
@@ -59,10 +59,10 @@ fn test_e2e_bootstrap_teardown_and_reuse() {
     d.check_invariants();
 
     // The domain is reusable in place...
-    let mut tl2: Timeline<u64> = Timeline::new(4, &d).unwrap();
+    let mut tl2: CopyTimeline<u64> = CopyTimeline::new(4, &d).unwrap();
     tl2.record(&mut d, 3, stamp(0, 0)).unwrap();
     tl2.check_lockstep(&d);
-    assert_eq!(unsafe { tl2.live_state(&d) }.unwrap(), Some(&3));
+    assert_eq!(unsafe { tl2.latest(&d) }.unwrap(), Some(&3));
 
     // ...and pre-teardown cursors are dead, gated by BelowChopLine.
     assert!(unsafe { d.restore(c0) }.is_err());

@@ -14,7 +14,6 @@
 //! releasing from the front only bumps `base` and never invalidates ids
 //! already stored in live handles or cursors.
 
-pub mod ds;
 #[cfg(any(test, feature = "testing"))]
 mod testing;
 
@@ -159,16 +158,16 @@ pub struct HighMark {
     pub end: NonNull<u8>,
 }
 
-pub struct Timeline<V> {
+pub struct CopyTimeline<V> {
     chunks: VecDeque<Chunk<V>>,
     free: Vec<Chunk<V>>,
     latest: Option<Stamp>,
     std_chunk_size: usize,
     domain_id: usize,
-    commit_horizon: Option<u64>
+    commit_horizon: Option<u64>,
 }
 
-impl<V> Timeline<V> {
+impl<V> CopyTimeline<V> {
     pub fn new(std_chunk_size: usize, d: &Domain) -> Result<Self, MesoError> {
         if std_chunk_size == 0 {
             return Err(MesoError::InitializedWithNoSlots);
@@ -198,17 +197,17 @@ impl<V> Timeline<V> {
         Ok(chunk)
     }
 
-    pub unsafe fn live_state<'d>(&self, d: &'d Domain) -> Result<Option<&'d V>, MesoError> {
+    pub unsafe fn latest<'d>(&self, d: &'d Domain) -> Result<Option<&'d V>, MesoError> {
         if d.id != self.domain_id {
             return Err(MesoError::ForeignDomain);
         }
-        match self.live_record() {
+        match self.latest_record() {
             Some(record) => Ok(Some(record.value.ptr.as_ref())),
             None => Ok(None),
         }
     }
 
-    fn live_record(&self) -> Option<&Record<V>> {
+    fn latest_record(&self) -> Option<&Record<V>> {
         if self.chunks.len() == 0 {
             return None;
         };
@@ -254,9 +253,9 @@ impl<V> Timeline<V> {
 
     /// Rollback hook for this timeline: discard every record of type V with `stamp.time >= to`.
     pub fn partial_rollback(&mut self, to: u64) -> Result<Option<HighMark>, MesoError> {
-        if let Some(t) = self.commit_horizon { 
+        if let Some(t) = self.commit_horizon {
             if to <= t {
-                return Err(MesoError::PastTheHorizon) 
+                return Err(MesoError::PastTheHorizon);
             }
         }
         // Recycle wholly-invalid chunks off the back
@@ -277,7 +276,67 @@ impl<V> Timeline<V> {
         let last = *back.records().last().expect("lo.time < to ⇒ keep ≥ 1");
         self.latest = Some(last.stamp);
         let end = unsafe {
-            NonNull::new_unchecked(last.value.ptr.as_ptr().cast::<u8>().wrapping_add(size_of::<V>()))
+            NonNull::new_unchecked(
+                last.value
+                    .ptr
+                    .as_ptr()
+                    .cast::<u8>()
+                    .wrapping_add(size_of::<V>()),
+            )
+        };
+        Ok(Some(HighMark {
+            chunk: last.value.home_chunk,
+            end,
+        }))
+    }
+
+    /// Rollback hook for this timeline: discard every record of type V with `stamp.time >= to`.
+    fn partial_rollback_apply(
+        &mut self,
+        d: &Domain,
+        to: u64,
+        mut undo: impl FnMut(&V),
+    ) -> Result<Option<HighMark>, MesoError> {
+        if d.id != self.domain_id {
+            return Err(MesoError::ForeignDomain);
+        }
+        if let Some(t) = self.commit_horizon {
+            if to <= t {
+                return Err(MesoError::PastTheHorizon);
+            }
+        }
+        // Recycle wholly-invalid chunks off the back
+        while self.chunks.back().is_some_and(|c| c.lo.time >= to) {
+            let mut dead = self.chunks.pop_back().unwrap();
+            for r in dead.records().iter().rev() {
+                undo(unsafe { r.value.ptr.as_ref() });
+            }
+            dead.reset();
+            self.free.push(dead);
+        }
+
+        let Some(back) = self.chunks.back_mut() else {
+            self.latest = None;
+            return Ok(None);
+        };
+        let keep = back.records().partition_point(|r| r.stamp.time < to);
+        while back.len > keep {
+            back.len -= 1;
+            let r = unsafe { back.slots[back.len].assume_init_ref() };
+            undo(unsafe { r.value.ptr.as_ref() });
+        }
+        back.seal = back.full();
+
+        let last = *back.records().last().expect("lo.time < to ⇒ keep ≥ 1");
+        self.latest = Some(last.stamp);
+        let end = unsafe {
+            NonNull::new_unchecked(
+                last.value
+                    .ptr
+                    .as_ptr()
+                    .cast::<u8>()
+                    .wrapping_add(size_of::<V>()),
+            )
         };
         Ok(Some(HighMark {
             chunk: last.value.home_chunk,
@@ -314,6 +373,39 @@ impl<V> Timeline<V> {
 
         let floor = front.records().first().map(|r| r.value.home_chunk);
         floor
+    }
+}
+
+pub struct IncrementalTimeline<V: Incremental> {
+    state: V,
+    log: CopyTimeline<V::Undo>,
+}
+
+impl<V: Incremental> IncrementalTimeline<V> {
+    pub fn new(init: V, d: &Domain, std_chunk_size: usize) -> Result<Self, MesoError> {
+        let log = CopyTimeline::new(std_chunk_size, d)?;
+        Ok(Self { state: init, log })
+    }
+
+    pub fn state(&self) -> &V {
+        &self.state
+    }
+
+    pub fn update(
+        &mut self,
+        d: &mut Domain,
+        new: V,
+        undo: V::Undo,
+        stamp: Stamp,
+    ) -> Result<(), MesoError> {
+        self.state = new;
+        self.log.record(d, undo, stamp)?;
+        Ok(())
+    }
+
+    pub fn partial_rollback(&mut self, d: &Domain, to: u64) -> Result<Option<HighMark>, MesoError> {
+        let s = &mut self.state;
+        self.log.partial_rollback_apply(d, to, |u| s.undo(u))
     }
 }
 
@@ -580,4 +672,9 @@ impl Drop for Domain {
 pub trait Transient {
     fn rollback(&mut self, to: u64);
     fn chop(&mut self, until: u64);
+}
+
+pub trait Incremental {
+    type Undo;
+    fn undo(&mut self, undo: &Self::Undo);
 }

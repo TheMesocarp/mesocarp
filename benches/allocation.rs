@@ -3,14 +3,14 @@
 //! cycle should recycle chunks (arena and index both) rather than allocate.
 
 use criterion::{criterion_group, criterion_main, BatchSize, Criterion};
-use mesocarp::transient::{Domain, Stamp, Timeline};
+use mesocarp::state_management::{Domain, Stamp, CopyTimeline};
 
 fn append_throughput(c: &mut Criterion) {
     c.bench_function("record_1k_appends", |b| {
         b.iter_batched(
             || {
                 let d = Domain::new(4096).unwrap();
-                let tl = Timeline::<u64>::new(512, &d).unwrap();
+                let tl = CopyTimeline::<u64>::new(512, &d).unwrap();
                 (d, tl)
             },
             |(mut d, mut tl)| {
@@ -26,7 +26,7 @@ fn append_throughput(c: &mut Criterion) {
 
 fn speculate_rollback_cycle(c: &mut Criterion) {
     let mut d = Domain::new(4096).unwrap();
-    let mut tl = Timeline::<u64>::new(512, &d).unwrap();
+    let mut tl = CopyTimeline::<u64>::new(512, &d).unwrap();
     tl.record(&mut d, 0, Stamp { time: 0, seq: 0 }).unwrap();
 
     let mut t = 1u64;

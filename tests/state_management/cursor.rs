@@ -2,7 +2,7 @@
 //! including on a fresh domain.
 
 use crate::common::CS;
-use mesocarp::transient::{Cursor, Domain};
+use mesocarp::state_management::{Cursor, Domain};
 
 #[test]
 fn test_cursor_UpdatesChunkAndOffset() {

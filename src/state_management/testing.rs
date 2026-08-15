@@ -7,7 +7,7 @@
 //! state machine) can call it after a mutation and turn a silent structural
 //! corruption into a loud failure.
 
-use super::{Domain, Timeline};
+use super::{CopyTimeline, Domain};
 
 impl Domain {
     /// Walk the arena's structural invariants (INV-ARENA-3, -4, -8 and bump
@@ -45,7 +45,7 @@ impl Domain {
     }
 }
 
-impl<V> Timeline<V> {
+impl<V> CopyTimeline<V> {
     /// Walk the index's structural invariants (INV-INDEX-1, -2, -3 and seal
     /// coherence). Panics on the first violation.
     pub fn check_invariants(&self) {

@@ -6,7 +6,7 @@
 //! orchestration layer owns them.
 #![allow(dead_code)]
 
-use mesocarp::transient::{Domain, Handle, HighMark, Stamp};
+use mesocarp::state_management::{Domain, Handle, HighMark, Stamp};
 
 /// 64-byte chunks: exactly eight u64 slots each.
 pub const CS: usize = 64;

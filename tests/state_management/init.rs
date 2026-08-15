@@ -3,7 +3,7 @@
 //! many types the module exposes.
 
 use crate::common::CS;
-use mesocarp::transient::{Domain, Timeline};
+use mesocarp::state_management::{CopyTimeline, Domain};
 use mesocarp::MesoError;
 
 #[test]
@@ -28,7 +28,7 @@ fn test_domainNew_RevertsWhenChunkSizeTooLarge() {
 fn test_timelineNew_RevertsWhenInitializedWithNoSlots() {
     let d = Domain::new(CS).unwrap();
     assert!(matches!(
-        Timeline::<u64>::new(0, &d),
+        CopyTimeline::<u64>::new(0, &d),
         Err(MesoError::InitializedWithNoSlots)
     ));
 }
